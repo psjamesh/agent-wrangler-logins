@@ -92,6 +92,9 @@ function drawPanel(el, logins) {
           state.send({ type: 'logins-set-claude-token', slug: login.slug, token });
         }));
         row.appendChild(paste);
+        const help = node(el, 'div', 'Or run ', 'setting-help logins-paste-help');
+        help.append(node(el, 'code', 'claude setup-token'), node(el, 'span', ' in a terminal, finish signing in in your browser, then paste the token it prints.'));
+        row.appendChild(help);
       }
     }
     el.appendChild(row);
