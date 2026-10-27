@@ -4,7 +4,8 @@
 .logins-field select, .logins-field .search-dd { text-transform: none; }
 .logins-field-message, .logins-expiry-warning { color: var(--warning, #c78b26); font-size: 12px; }
 .login-pill { white-space: nowrap; }
-.logins-panel { display: flex; flex-direction: column; gap: 12px; }
+.logins-panel { display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
+.logins-provider > span, .logins-status { font-size: 12px; }
 .logins-entry { padding: 12px; border: 1px solid var(--border, #555); border-radius: 6px; }
 .logins-heading, .logins-provider, .logins-paste, .logins-add { display: flex; align-items: center; gap: 10px; }
 .logins-heading { justify-content: space-between; margin-bottom: 8px; }
