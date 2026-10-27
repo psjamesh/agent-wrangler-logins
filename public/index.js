@@ -109,7 +109,7 @@ function drawPanel(el, logins) {
 export default {
   register(reg) {
     reg.register('dispatch.field', {
-      id: 'login', at: 'model',
+      id: 'login', at: 'advanced',
       mount(el, api, ctx) {
         const label = node(el, 'label', 'Login', 'logins-field-label');
         const select = node(el, 'select'); select.setAttribute('aria-label', 'Login');

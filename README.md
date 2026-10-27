@@ -1,6 +1,6 @@
 # Logins for Agent Wrangler
 
-Run a session on a stored second Claude or Codex login. Choose **Login** when dispatching; **Default** uses the CLIs’ own login. A card keeps its login across resume, fork and spawned children.
+Run a session on a stored second Claude or Codex login. Choose **Login** under **Advanced options** when dispatching; **Default** uses the CLIs’ own login. A card keeps its login across resume, fork and spawned children.
 
 ## Install
 
@@ -21,11 +21,13 @@ Open **Settings → Extensions → Logins**, enter a name and choose **Add login
 - **Claude:** choose **Log in**, press Enter in the terminal, and complete `claude setup-token` in your browser. Logins captures the token into a private file. **Paste token** is the fallback. The panel shows the expiry date and warns during the last month of the token’s one-year life. This token supports model requests and local MCP servers; Remote Control and claude.ai connectors are unavailable.
 - **Codex:** choose **Log in**, press Enter, and finish the CLI authentication. Codex stores its credentials in the login’s mirror home. Shared configuration and session rollouts remain visible to the board; authentication and private runtime sockets stay separate.
 
+**Update or renew:** choose **Forget** for the provider, then **Log in** again (or **Paste token** for Claude). This replaces only that provider’s credential and keeps the login’s name and card bindings. Codex refreshes its credentials automatically during use; renew a Claude token before its displayed expiry.
+
 Settings requests metadata when opened and after reconnecting. Adding, forgetting, removing and completing authentication updates every open tab. Only labels, provider presence, Claude capture time and Codex email are delivered to the panel. Errors appear in the panel; reconnect or reopen it to retry a read.
 
 ## Run a session
 
-The dispatch dialog opens on **Default** each time. Select a login and a model supported by it. An extension that hosts the standard dispatch fields offers the same **Login** choice and validation.
+In the dispatch dialog, expand **Advanced options** to find **Login**, which opens on **Default** each time. Select a login and a model supported by it. An extension that hosts the standard dispatch fields offers the same **Login** choice and validation.
 
 A login without the chosen provider blocks dispatch. Runtimes that build their own launch command are also blocked because they cannot apply the login environment. Local, devcontainer and runtimes that wrap the standard launch command can use logins.
 

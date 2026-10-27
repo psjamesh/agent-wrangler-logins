@@ -122,7 +122,8 @@ test('real host validates the standalone manifest and hosts independent Login di
   const api = { send() {}, runtimes: () => [{ id: 'cloud', label: 'Cloud', ownLaunch: true }] };
   client.register(slots.forExtension('logins', api));
   const make = () => document.createElement('div');
-  const board = make(); slots.syncHosts('dispatch.field', [{ host: board, at: 'model' }], api);
+  const model = make(); const advanced = make();
+  slots.syncHosts('dispatch.field', [{ host: model, at: 'model' }, { host: advanced, at: 'advanced' }], api);
   const ctx = { mode: 'launcher', draft: { agent: 'codex' } };
   const graph = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true }, codex: { present: false } }], sessions: {} } };
   slots.update('dispatch.field', ctx, graph);
@@ -133,7 +134,8 @@ test('real host validates the standalone manifest and hosts independent Login di
   walk(root).value = 'personal';
   assert.equal(handle.validate(), '"Personal" has no Codex login');
   assert.deepEqual(handle.read(), { ext: { logins: { login: 'personal' } } });
-  assert.equal(walk(board).value, '');
+  assert.equal(walk(model), undefined);
+  assert.equal(walk(advanced).value, '');
   handle.update({ mode: 'launcher', draft: { agent: 'claude', runtime: 'cloud' } }, graph);
   assert.equal(handle.validate(), '"Personal" cannot be used with runtime "Cloud"');
   handle.unmount(); assert.equal(root.children.length, 0); assert.deepEqual(errors, []);
