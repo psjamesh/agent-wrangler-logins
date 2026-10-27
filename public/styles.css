@@ -1,6 +1,7 @@
 .logins-field { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; }
 .logins-field-label { display: flex; align-items: center; gap: 12px; font-weight: 600; }
 .logins-field select { flex: 1; min-width: 0; }
+.logins-field select, .logins-field .search-dd { text-transform: none; }
 .logins-field-message, .logins-expiry-warning { color: var(--warning, #c78b26); font-size: 12px; }
 .login-pill { white-space: nowrap; }
 .logins-panel { display: flex; flex-direction: column; gap: 12px; }
