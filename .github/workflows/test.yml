@@ -1,0 +1,30 @@
+name: Test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm test
+      - run: npm run docs:check
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/checkout@v4
+        with:
+          repository: psjamesh/agent-wrangler
+          ref: c752e2e7bab45ad295070437d34e6a6af17e88e1
+          path: host
+      - run: npm ci --prefix host
+      - run: npm run test:integration
+        env:
+          AW_HOST_CHECKOUT: ${{ github.workspace }}/host

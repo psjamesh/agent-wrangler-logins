@@ -1,0 +1,21 @@
+{
+  "name": "agent-wrangler-logins",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "description": "Run Agent Wrangler sessions on stored Claude or Codex logins.",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "test": "node test/unit.js",
+    "test:integration": "node --import ./test/setup.js --test integration.test.js",
+    "docs:check": "node test/docs-check.js"
+  },
+  "wranglerExtension": {
+    "id": "logins",
+    "label": "Logins",
+    "description": "Dispatch a session on another Claude or Codex login while the rest of the board keeps Default.",
+    "author": "psjamesh",
+    "requires": ["board:rebuild", "board:broadcast", "terminals:create"],
+    "engines": { "wranglerApi": "^1.48.0" }
+  }
+}
