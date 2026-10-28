@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LoginStore } from './login-store.js';
-import { HANDLERS, stopCaptures, publish } from './handlers.js';
+import { HANDLERS, metadata, publish } from './handlers.js';
 import { prepare, launchContext, onBeforeDispatch, onFork, onPurge } from './launch.js';
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -14,7 +14,7 @@ export default {
   description: 'Dispatch a session on another Claude or Codex login while the rest of the board keeps Default.',
   author: 'psjamesh', defaultEnabled: false, dir,
   requires: ['board:rebuild', 'board:broadcast', 'terminals:create'],
-  engines: { wranglerApi: '^1.48.0' },
+  engines: { wranglerApi: '^1.51.0' },
   stores: { logins: () => new LoginStore() },
   handlers: HANDLERS,
   hooks: { 'session.prepare': prepare, 'session.launchContext': launchContext },
@@ -30,7 +30,7 @@ export default {
     const notify = async () => {
       if (!active) return;
       try {
-        const signature = JSON.stringify(store.list());
+        const signature = JSON.stringify(await metadata(host));
         if (signature === previous) return;
         await publish(host);
         previous = signature;
@@ -55,7 +55,6 @@ export default {
     if (!store) return;
     watchers.get(store)?.();
     watchers.delete(store);
-    stopCaptures(store);
   },
   client: 'public/index.js', styles: 'public/styles.css',
 };

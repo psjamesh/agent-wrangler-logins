@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { AUTH_OVERRIDES } from '../claude-config.js';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'logins-test-home-'));
 process.env.HOME = home;
 process.env.AW_DATA_DIR = path.join(home, '.agent-wrangler');
 process.env.CODEX_HOME = path.join(home, '.codex');
 process.env.CLAUDE_CONFIG_DIR = path.join(home, '.claude');
-for (const dir of [process.env.AW_DATA_DIR, process.env.CODEX_HOME, process.env.CLAUDE_CONFIG_DIR]) fs.mkdirSync(dir, { recursive: true });
+for (const name of AUTH_OVERRIDES) delete process.env[name];
+for (const dir of [process.env.AW_DATA_DIR, process.env.CODEX_HOME, path.join(process.env.CLAUDE_CONFIG_DIR, 'projects'), path.join(process.env.CLAUDE_CONFIG_DIR, 'sessions')]) fs.mkdirSync(dir, { recursive: true });
 process.on('exit', () => fs.rmSync(home, { recursive: true, force: true }));

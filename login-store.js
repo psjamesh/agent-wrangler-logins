@@ -1,6 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { dataDir, writeJsonAtomic, writeAtomic } from './persistence.js';
+import { randomBytes } from 'node:crypto';
+import { dataDir, writeJsonAtomic } from './persistence.js';
+import { linkShared, seedSettings, plaintextCredentials } from './claude-config.js';
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); }
@@ -23,6 +25,34 @@ export class LoginStore {
 
   codexHome(slug) { return path.join(this.dir(slug), 'codex-home'); }
   claudeTokenPath(slug) { return path.join(this.dir(slug), 'claude.token'); }
+  claudeDir(slug) {
+    const name = readJson(path.join(this.dir(slug), 'login.json'), {}).claudeDir;
+    if (name == null) return null;
+    if (typeof name !== 'string' || !/^claude-[0-9a-f]{16}$/.test(name)) throw new Error('Invalid login metadata');
+    const entry = path.join(this.dir(slug), name);
+    const stat = fs.lstatSync(entry, { throwIfNoEntry: false });
+    if (!stat) return null;
+    if (!stat.isDirectory()) throw new Error('Claude config folder is not a directory');
+    return fs.realpathSync(entry);
+  }
+  setUpClaude(slug) {
+    if (!this.get(slug)) throw new Error(`login "${this.labelFor(slug)}" no longer exists`);
+    let dir = this.claudeDir(slug);
+    if (!dir) {
+      const name = `claude-${randomBytes(8).toString('hex')}`;
+      const created = path.join(this.dir(slug), name);
+      fs.mkdirSync(created, { mode: 0o700 });
+      try {
+        seedSettings(created);
+        const metaPath = path.join(this.dir(slug), 'login.json');
+        writeJsonAtomic(metaPath, { ...readJson(metaPath, {}), claudeDir: name });
+      } catch (err) { fs.rmSync(created, { recursive: true, force: true }); throw err; }
+      dir = fs.realpathSync(created);
+    }
+    const links = linkShared(dir);
+    if (links.unready.length) throw new Error(`Claude ${links.unready.join(' and ')} cannot be shared from the default Claude folder`);
+    return dir;
+  }
   _sessions() {
     const sessions = readJson(path.join(this.root, 'sessions.json'), {});
     if (!sessions || Array.isArray(sessions) || typeof sessions !== 'object' || Object.values(sessions).some((slug) => typeof slug !== 'string')) throw new Error('Invalid login bindings');
@@ -47,7 +77,8 @@ export class LoginStore {
   get(slug) {
     const meta = readJson(path.join(this.dir(slug), 'login.json'), null);
     if (!meta) return null;
-    if (typeof meta.label !== 'string' || (meta.claudeCapturedAt != null && (typeof meta.claudeCapturedAt !== 'number' || !Number.isFinite(meta.claudeCapturedAt)))) throw new Error('Invalid login metadata');
+    if (typeof meta.label !== 'string') throw new Error('Invalid login metadata');
+    const claudeDir = this.claudeDir(slug);
     const authPath = path.join(this.codexHome(slug), 'auth.json');
     let email = null;
     if (fs.existsSync(authPath)) {
@@ -57,7 +88,8 @@ export class LoginStore {
         if (typeof claims.email === 'string') email = claims.email;
       } catch {}
     }
-    return { slug, label: meta.label, claude: { present: fs.existsSync(this.claudeTokenPath(slug)), capturedAt: meta.claudeCapturedAt ?? null }, codex: { present: fs.existsSync(authPath), email } };
+    const claude = { present: !!claudeDir, plaintext: !!claudeDir && plaintextCredentials(claudeDir), oldToken: fs.existsSync(this.claudeTokenPath(slug)) };
+    return { slug, label: meta.label, claude, codex: { present: fs.existsSync(authPath), email } };
   }
 
   list() {
@@ -67,31 +99,16 @@ export class LoginStore {
     return entries.filter((e) => e.isDirectory()).map((e) => this.get(e.name)).filter(Boolean);
   }
 
-  setClaudeToken(slug, token) {
-    if (!this.get(slug)) throw new Error(`login "${this.labelFor(slug)}" no longer exists`);
-    const file = this.claudeTokenPath(slug);
-    writeAtomic(file, token.trim());
-    const metaPath = path.join(this.dir(slug), 'login.json');
-    writeJsonAtomic(metaPath, { ...readJson(metaPath, {}), claudeCapturedAt: Date.now() });
-  }
-
-  readClaudeToken(slug) {
-    try {
-      const token = fs.readFileSync(this.claudeTokenPath(slug), 'utf8').trim();
-      if (token) return token;
-    } catch {}
-    throw new Error(`login "${this.labelFor(slug)}" has no usable Claude token`);
-  }
-
   forget(slug, provider) {
     if (!this.get(slug)) throw new Error(`login "${this.labelFor(slug)}" no longer exists`);
     if (provider === 'codex') fs.rmSync(this.codexHome(slug), { recursive: true, force: true });
     else if (provider === 'claude') {
-      fs.rmSync(this.claudeTokenPath(slug), { force: true });
       const file = path.join(this.dir(slug), 'login.json');
       const meta = readJson(file, {});
-      delete meta.claudeCapturedAt;
+      const dir = this.claudeDir(slug);
+      delete meta.claudeDir;
       writeJsonAtomic(file, meta);
+      if (dir) fs.rmSync(dir, { recursive: true, force: true });
     } else throw new Error('Invalid login provider');
   }
 

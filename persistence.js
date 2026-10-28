@@ -7,6 +7,7 @@ export function expandHome(value) {
   if (value === '~') return os.homedir();
   return value.startsWith('~/') ? path.join(os.homedir(), value.slice(2)) : value;
 }
+export function shellQuote(value) { return `'${String(value).replace(/'/g, "'\\''")}'`; }
 export function dataDir() {
   return process.env.AW_DATA_DIR ? path.resolve(expandHome(process.env.AW_DATA_DIR)) : path.join(os.homedir(), '.agent-wrangler');
 }

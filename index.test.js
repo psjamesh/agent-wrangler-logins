@@ -24,7 +24,7 @@ test('package and runtime manifest disclose matching capabilities and host API',
   const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url)));
   for (const key of ['id', 'label', 'description', 'author', 'requires', 'engines']) assert.deepEqual(extension[key], pkg.wranglerExtension[key]);
   assert.equal(extension.id, 'logins'); assert.equal(extension.defaultEnabled, false);
-  assert.equal(extension.engines.wranglerApi, '^1.48.0');
+  assert.equal(extension.engines.wranglerApi, '^1.51.0');
   assert.equal(pkg.engines.node, '>=20');
   assert.equal(pkg.type, 'module');
   assert.equal(pkg.dependencies, undefined);
@@ -33,8 +33,8 @@ test('package and runtime manifest disclose matching capabilities and host API',
 test('graph remains sanitized while scoped Settings metadata omits bindings', (t) => {
   const { store, host } = fixture(t);
   assert.deepEqual(extension.graph({ host }), { logins: { logins: [], sessions: {} } });
-  store.add('Personal'); store.setClaudeToken('personal', 'fixture-secret'); store.bind('card', 'personal');
-  assert.ok(!JSON.stringify(extension.graph({ host })).includes('fixture-secret'));
+  store.add('Personal'); const dir = store.setUpClaude('personal'); store.bind('card', 'personal');
+  assert.ok(!JSON.stringify(extension.graph({ host })).includes(dir));
 });
 
 test('production static imports stay inside this package and use only Node builtins', () => {
@@ -50,19 +50,21 @@ test('production static imports stay inside this package and use only Node built
   visit(path.join(dir, 'index.js')); visit(path.join(dir, 'public/index.js'));
 });
 
-test('authentication completion publishes Claude and Codex metadata to all tabs and deactivation closes watches', async (t) => {
+test('setup and a plaintext fallback publish Claude and Codex metadata to all tabs and deactivation closes watches', async (t) => {
   const { store, host, frames } = fixture(t); store.add('Personal');
   extension.activate({ host });
   const send = (type, msg) => extension.handlers.find((h) => h.type === type).handler(msg, host, () => {});
-  await send('logins-login', { slug: 'personal', provider: 'claude' }).catch(() => {});
-  host.terminals = { create: async () => {} };
+  host.terminals = { create: async () => ({ terminalId: 'term', reused: false }), alive: async () => true };
   await send('logins-login', { slug: 'personal', provider: 'claude' });
-  fs.writeFileSync(path.join(store.dir('personal'), 'claude-capture.txt'), 'sk-ant-oat01-fixture_abcdefghijklmnopqr');
   await until(() => frames.some((f) => f.logins?.[0]?.claude.present));
+  fs.writeFileSync(path.join(store.claudeDir('personal'), '.credentials.json'), 'fixture-private');
+  await until(() => frames.some((f) => f.logins?.[0]?.claude.plaintext));
   await send('logins-login', { slug: 'personal', provider: 'codex' });
   fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}');
   await until(() => frames.some((f) => f.logins?.[0]?.codex.present));
-  assert.ok(!JSON.stringify(frames).includes('sk-ant-oat01'));
+  host.terminals.alive = async () => false;
+  await until(() => frames.at(-1).logins?.[0]?.claude.terminal === false);
+  assert.ok(!JSON.stringify(frames).includes('fixture-private'));
   assert.ok(frames.every((f) => !('sessions' in f)));
   extension.deactivate({ host }); await pause(200); const count = frames.length;
   store.forget('personal', 'codex'); await pause(200); assert.equal(frames.length, count);

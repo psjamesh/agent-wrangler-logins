@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { pathToFileURL } from 'node:url';
 const checkout = process.env.AW_HOST_CHECKOUT;
-if (!checkout || !path.isAbsolute(checkout)) throw new Error('Set AW_HOST_CHECKOUT to an absolute host checkout with API 1.48.0 and installed dependencies');
+if (!checkout || !path.isAbsolute(checkout)) throw new Error('Set AW_HOST_CHECKOUT to an absolute host checkout with API 1.51.0 and installed dependencies');
 const hostModule = (file) => import(pathToFileURL(path.join(checkout, file)).href);
 const home = os.homedir();
 const { default: extension } = await import('./index.js');
@@ -23,7 +23,7 @@ function fixture(t, enabled = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-login-integration-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new LoginStore(path.join(root, 'logins')); store.add('Personal');
-  store.setClaudeToken('personal', 'fixture-token');
+  store.setUpClaude('personal');
   fs.mkdirSync(store.codexHome('personal')); fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}');
   const registry = loadExtensions({ cfg: { extensions: { logins: enabled } }, builtin: [extension] });
   const host = { stores: { logins: store } };
@@ -44,8 +44,12 @@ for (const agent of ['claude', 'codex']) {
     const { sm, api, store, commands, root } = fixture(t);
     const card = await api.sessions.spawn({ cwd: root, intent: 'fixture', agent, ext: { logins: { login: 'personal' } } });
     assert.equal(store.loginFor(card.sessionId), 'personal');
-    const marker = agent === 'claude' ? "CLAUDE_CODE_OAUTH_TOKEN='fixture-token'" : `CODEX_HOME='${store.codexHome('personal')}'`;
+    const marker = agent === 'claude' ? `CLAUDE_CONFIG_DIR='${store.claudeDir('personal')}'` : `CODEX_HOME='${store.codexHome('personal')}'`;
     assert.ok(commands[0].includes(marker));
+    if (agent === 'claude') {
+      assert.match(commands[0], /\/bin\/sh -c .*CLAUDE_SECURESTORAGE_CONFIG_DIR\+x.* && /);
+      assert.doesNotMatch(commands[0], /TOKEN=|API_KEY=|fixture-private/);
+    }
     const liveId = `${card.sessionId}-live`;
     sm.map.get(card.sessionId).liveSessionId = liveId;
     if (agent === 'claude') {
@@ -81,15 +85,15 @@ for (const agent of ['claude', 'codex']) {
     await sm.fork({ sourceId: liveId, parentId: card.sessionId, parentEntry: sm.entryFor(card.sessionId), cwd: root });
     assert.equal(commands.length, 3);
     for (const cmd of commands) {
-      assert.ok(!cmd.includes('fixture-token'));
       assert.ok(!cmd.includes(store.codexHome('personal')));
-      assert.ok(!cmd.includes('CLAUDE_CODE_OAUTH_TOKEN='));
+      assert.ok(!cmd.includes('CLAUDE_CONFIG_DIR='));
+      assert.ok(!cmd.includes('CLAUDE_SECURESTORAGE_CONFIG_DIR'));
       assert.ok(!cmd.includes('CODEX_HOME='));
     }
   });
 }
 
-test('archive review uses the mapped Claude token; a Codex-only login skips with a named refusal', async (t) => {
+test('archive review uses the mapped Claude config dir; a Codex-only login skips with a named refusal', async (t) => {
   const { store, sm, options } = fixture(t);
   store.bind('review-card', 'personal');
   const events = createEventBus(); events.on(ARCHIVE_REVIEW_COMPLETED, () => {}, 'memory');
@@ -103,7 +107,7 @@ test('archive review uses the mapped Claude token; a Codex-only login skips with
   };
   const entry = { agent: 'claude', liveSessionId: 'fixture-live' };
   assert.equal(await runArchiveReview('review-card', entry, { id: 'task' }, deps), 'none');
-  assert.deepEqual(calls, [{ env: { CLAUDE_CODE_OAUTH_TOKEN: 'fixture-token' } }]);
+  assert.deepEqual(calls, [{ env: { CLAUDE_CONFIG_DIR: store.claudeDir('personal') } }]);
   store.forget('personal', 'claude');
   assert.equal(await runArchiveReview('review-card', entry, { id: 'task' }, deps), 'skipped');
   assert.equal(calls.length, 1);
@@ -137,7 +141,7 @@ test('real host validates the standalone manifest and hosts independent Login di
   assert.equal(walk(model), undefined);
   assert.equal(walk(advanced).value, '');
   handle.update({ mode: 'launcher', draft: { agent: 'claude', runtime: 'cloud' } }, graph);
-  assert.equal(handle.validate(), '"Personal" cannot be used with runtime "Cloud"');
+  assert.equal(handle.validate(), '"Personal" runs Claude only on the local runtime, not "Cloud"');
   handle.unmount(); assert.equal(root.children.length, 0); assert.deepEqual(errors, []);
 });
 
@@ -168,17 +172,19 @@ test('host install, update, uninstall and reinstall preserve stored logins and b
     assert.equal(disclosure.id, 'logins');
     assert.deepEqual(disclosure.capabilities, extension.requires);
     const { readDeclaration } = await hostModule('server/extensions/install.js');
-    assert.equal(readDeclaration(source).range, '^1.48.0');
+    assert.equal(readDeclaration(source).range, '^1.51.0');
     await extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, ctx);
     assert.equal(replies.find((f) => f.type === 'ext-install-done')?.installed, true);
   };
   await install();
   const { default: installed } = await import(pathToFileURL(path.join(externalDir(), 'logins', 'index.js')));
-  const store = installed.stores.logins(); store.add('Retained'); store.setClaudeToken('retained', 'fixture-private'); store.bind('retained-card', 'retained');
+  const store = installed.stores.logins(); store.add('Retained'); const claudeDir = store.setUpClaude('retained'); store.bind('retained-card', 'retained');
+  fs.writeFileSync(store.claudeTokenPath('retained'), 'fixture-private', { mode: 0o600 });
   const assertPreserved = () => {
     assert.equal(new LoginStore().loginFor('retained-card'), 'retained');
-    assert.equal(new LoginStore().readClaudeToken('retained'), 'fixture-private');
-    assert.equal(fs.statSync(store.claudeTokenPath('retained')).mode & 0o777, 0o600);
+    assert.equal(new LoginStore().claudeDir('retained'), claudeDir);
+    assert.equal(fs.statSync(claudeDir).mode & 0o777, 0o700);
+    assert.equal(fs.readFileSync(store.claudeTokenPath('retained'), 'utf8'), 'fixture-private');
   };
   await install(); assertPreserved();
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'logins' }, ctx);

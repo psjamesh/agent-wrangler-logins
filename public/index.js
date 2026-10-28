@@ -1,4 +1,3 @@
-const DAY = 86400000;
 const KEY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>';
 function node(el, tag, text, className) {
   const child = el.ownerDocument.createElement(tag);
@@ -23,8 +22,10 @@ function message(el, ctx) {
   const agent = agentFor(ctx);
   if (!['claude', 'codex'].includes(agent)) return `Choose a Claude or Codex model for "${label}"`;
   if (!login[agent]?.present) return `"${label}" has no ${agent === 'claude' ? 'Claude' : 'Codex'} login`;
-  const runtime = state.api.runtimes?.().find((r) => r.id === ctx?.draft?.runtime);
-  if (runtime?.ownLaunch) return `"${label}" cannot be used with runtime "${runtime.label || runtime.id}"`;
+  const runtimeId = ctx?.draft?.runtime;
+  const runtime = state.api.runtimes?.().find((r) => r.id === runtimeId);
+  if (agent === 'claude' && runtimeId && runtimeId !== 'local') return `"${label}" runs Claude only on the local runtime, not "${runtime?.label || runtimeId}"`;
+  if (agent === 'codex' && runtime?.ownLaunch) return `"${label}" cannot be used with runtime "${runtime.label || runtime.id}"`;
   return '';
 }
 function validate(el, ctx) {
@@ -80,28 +81,18 @@ function drawPanel(el, logins) {
       const status = login[provider];
       const label = provider === 'claude' ? 'Claude' : 'Codex';
       let text = `${label}: ${status.present ? 'logged in' : 'not logged in'}`;
-      let soon = false;
-      if (provider === 'codex' && status.present && status.email) text += ` as ${status.email}`;
-      if (provider === 'claude' && status.present && status.capturedAt) {
-        const expiry = Number(status.capturedAt) + 365 * DAY;
-        soon = expiry - Date.now() < 30 * DAY;
-        text += ` · expires ${new Date(expiry).toLocaleDateString()}${expiry <= Date.now() ? ' · expired' : soon ? ' · expires soon' : ''}`;
-      }
-      line.appendChild(node(el, 'span', text, soon ? 'logins-expiry-warning' : ''));
-      line.appendChild(button(el, status.present ? 'Forget' : 'Log in', () => state.send({ type: status.present ? 'logins-forget' : 'logins-login', slug: login.slug, provider })));
+      if (provider === 'claude') text = `${label}: ${status.present ? 'set up · sign-in not verified' : 'not set up'}`;
+      else if (status.present && status.email) text += ` as ${status.email}`;
+      line.appendChild(node(el, 'span', text));
+      const actions = node(el, 'span', undefined, 'logins-actions');
+      const send = (type) => () => state.send({ type, slug: login.slug, provider });
+      if (status.terminal) actions.appendChild(button(el, 'Reopen terminal', send('logins-login')));
+      else if (!status.present || provider === 'claude') actions.appendChild(button(el, 'Log in', send('logins-login')));
+      if (status.present) actions.appendChild(button(el, 'Forget', send('logins-forget')));
+      line.appendChild(actions);
       row.appendChild(line);
-      if (provider === 'claude' && !status.present) {
-        const paste = node(el, 'div', undefined, 'logins-paste');
-        const input = node(el, 'input'); input.type = 'password'; input.autocomplete = 'off'; input.placeholder = 'Claude setup-token'; input.setAttribute('aria-label', `Claude setup-token for ${login.label}`);
-        paste.append(input, button(el, 'Paste token', () => {
-          const token = input.value; input.value = '';
-          state.send({ type: 'logins-set-claude-token', slug: login.slug, token });
-        }));
-        row.appendChild(paste);
-        const help = node(el, 'div', 'Or run ', 'setting-help logins-paste-help');
-        help.append(node(el, 'code', 'claude setup-token'), node(el, 'span', ' in a terminal, finish signing in in your browser, then paste the token it prints.'));
-        row.appendChild(help);
-      }
+      if (provider === 'claude' && status.plaintext) row.appendChild(node(el, 'div', 'Claude saved this login’s credential in a plaintext .credentials.json file instead of the Keychain. Sessions still run.', 'logins-warning'));
+      if (provider === 'claude' && status.oldToken) row.appendChild(node(el, 'div', 'This login’s old claude.token file is no longer used. Logins leaves it on disk.', 'setting-help'));
     }
     el.appendChild(row);
   }
