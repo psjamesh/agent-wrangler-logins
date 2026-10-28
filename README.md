@@ -31,7 +31,7 @@ In the dispatch dialog, expand **Advanced options** to find **Login**, which ope
 
 A login without the chosen provider blocks dispatch. Runtimes that build their own launch command are also blocked because they cannot apply the login environment. Local, devcontainer and runtimes that wrap the standard launch command can use logins.
 
-A login pill identifies mapped cards. Resume and fork retain that login. Every spawned child inherits its parent’s login, including **Default**, regardless of supplied dispatch extension data. A cross-provider child needs both providers in its inherited login.
+A login pill, with a key icon and an amber wash, names a mapped card’s login. A removed login’s pill turns grey with a dashed outline and reads **(removed)**. Resume and fork retain that login. Every spawned child inherits its parent’s login, including **Default**, regardless of supplied dispatch extension data. A cross-provider child needs both providers in its inherited login.
 
 **Forget** removes a provider credential. **Remove** deletes a login’s credentials. Running sessions continue, but future launches, resumes, forks and headless runs refuse missing or unreadable credentials. Removed login bindings and their labels remain until their cards are purged; archive keeps them. A removed name cannot be reused while it is still bound.
 

@@ -34,6 +34,13 @@ test('pill draws mapped and removed labels; panel offers management and expiry w
   contributions['card.pill'].mount(pill, api);
   contributions['card.pill'].update(pill, { sessionId: 'mapped' }, graph);
   assert.equal(pill.textContent, 'Personal');
+  const tag = pill.children[0];
+  assert.equal(tag.className, 'card-tag login-pill'); assert.equal(tag.title, 'Login: Personal');
+  assert.match(tag.children[0].innerHTML, /^<svg /); assert.equal(tag.children[0]['aria-hidden'], 'true');
+  contributions['card.pill'].update(pill, { sessionId: 'mapped' }, { logins: { logins: [{ slug: 'personal', label: 'Personal', removed: true }], sessions: { mapped: 'personal' } } });
+  assert.equal(pill.textContent, 'Personal (removed)');
+  assert.equal(pill.children[0].className, 'card-tag login-pill login-pill-removed');
+  assert.match(pill.children[0].title, /removed; relaunch is refused/);
   contributions['card.pill'].update(pill, { sessionId: 'default' }, graph);
   assert.equal(pill.textContent, '');
   const panel = make(); contributions['settings.panel'].mount(panel, api); emit({ kind: 'logins', logins: graph.logins.logins });
