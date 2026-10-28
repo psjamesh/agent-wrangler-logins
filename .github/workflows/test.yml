@@ -4,7 +4,7 @@ permissions:
   contents: read
 jobs:
   unit:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -13,7 +13,7 @@ jobs:
       - run: npm test
       - run: npm run docs:check
   integration:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -22,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: psjamesh/agent-wrangler
-          ref: c752e2e7bab45ad295070437d34e6a6af17e88e1
+          ref: 6f8214cd2a9b15321ca1ca77e97a3601b7d3996c
           path: host
       - run: npm ci --prefix host
       - run: npm run test:integration
