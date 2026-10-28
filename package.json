@@ -16,6 +16,6 @@
     "description": "Dispatch a session on another Claude or Codex login while the rest of the board keeps Default.",
     "author": "psjamesh",
     "requires": ["board:rebuild", "board:broadcast", "terminals:create"],
-    "engines": { "wranglerApi": "^1.48.0" }
+    "engines": { "wranglerApi": "^1.51.0" }
   }
 }

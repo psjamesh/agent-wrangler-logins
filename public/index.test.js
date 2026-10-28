@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import extension from './index.js';
 
 import { dom } from '../test/dom.js';
-const graph = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true, capturedAt: Date.now() - 350 * 86400000 }, codex: { present: false, email: null } }], sessions: { mapped: 'personal' } } };
+const graph = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true, plaintext: false, oldToken: false, terminal: false }, codex: { present: false, email: null, terminal: false } }], sessions: { mapped: 'personal' } } };
 function setup() {
   const document = dom(); const sent = []; const contributions = {};
   const messages = new Set(); const connects = new Set();
@@ -23,13 +23,18 @@ test('Login field lists Default, reads selection, blocks provider/runtime, reset
   assert.deepEqual(c.ext(el), { login: 'personal' });
   assert.equal(c.validate(el, ctx), '"Personal" has no Codex login');
   assert.ok(el.textContent.includes('"Personal" has no Codex login'));
-  assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'cloud' } }), '"Personal" cannot be used with runtime "Cloud"');
+  assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'cloud' } }), '"Personal" runs Claude only on the local runtime, not "Cloud"');
+  assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'devcontainer' } }), '"Personal" runs Claude only on the local runtime, not "devcontainer"');
+  assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'local' } }), null);
+  c.update(el, ctx, { logins: { logins: [{ ...graph.logins.logins[0], codex: { present: true, email: null } }], sessions: {} } });
+  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'cloud' } }), '"Personal" cannot be used with runtime "Cloud"');
+  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'devcontainer' } }), null);
   c.update(el, { draft: { agent: 'claude' } }, { logins: { logins: [], sessions: {} } });
   assert.match(c.validate(el, { draft: { agent: 'claude' } }), /no longer exists/);
   c.open(el); assert.equal(select.value, ''); assert.deepEqual(c.ext(el), { login: null });
 });
 
-test('pill draws mapped and removed labels; panel offers management and expiry with no token text', () => {
+test('pill draws mapped and removed labels; panel offers native login, Reopen and warnings with no token entry', () => {
   const { make, api, sent, contributions, emit } = setup(); const pill = make();
   contributions['card.pill'].mount(pill, api);
   contributions['card.pill'].update(pill, { sessionId: 'mapped' }, graph);
@@ -44,7 +49,22 @@ test('pill draws mapped and removed labels; panel offers management and expiry w
   contributions['card.pill'].update(pill, { sessionId: 'default' }, graph);
   assert.equal(pill.textContent, '');
   const panel = make(); contributions['settings.panel'].mount(panel, api); emit({ kind: 'logins', logins: graph.logins.logins });
-  assert.ok(panel.textContent.includes('expires soon'));
+  assert.ok(panel.textContent.includes('Claude: set up · sign-in not verified'));
+  assert.ok(panel.textContent.includes('Codex: not logged in'));
+  assert.equal(walk(panel, (e) => e.tagName === 'INPUT' && e.type === 'password'), undefined);
+  assert.ok(!/setup-token|Paste token|expires/.test(panel.textContent));
+  const buttons = () => { const out = []; const visit = (e) => { if (e.tagName === 'BUTTON') out.push(e.textContent); e.children.forEach(visit); }; visit(panel); return out; };
+  assert.deepEqual(buttons(), ['Remove', 'Log in', 'Forget', 'Log in', 'Add login']);
+  walk(panel, (e) => e.tagName === 'BUTTON' && e.textContent === 'Log in').listeners.click();
+  assert.deepEqual({ ...sent.at(-1), reqId: undefined }, { type: 'logins-login', slug: 'personal', provider: 'claude', reqId: undefined });
+  const login = graph.logins.logins[0];
+  emit({ kind: 'logins', logins: [{ ...login, claude: { present: true, plaintext: true, oldToken: true, terminal: true }, codex: { present: false, terminal: true } }] });
+  assert.deepEqual(buttons(), ['Remove', 'Reopen terminal', 'Forget', 'Reopen terminal', 'Add login']);
+  assert.ok(panel.textContent.includes('plaintext .credentials.json'));
+  assert.ok(panel.textContent.includes('old claude.token file is no longer used'));
+  emit({ kind: 'logins', logins: [{ ...login, claude: { present: false, plaintext: false, oldToken: false, terminal: false } }] });
+  assert.ok(panel.textContent.includes('Claude: not set up'));
+  assert.deepEqual(buttons(), ['Remove', 'Log in', 'Log in', 'Add login']);
   const input = walk(panel, (e) => e.placeholder === 'Login name'); input.value = 'Another';
   walk(panel, (e) => e.tagName === 'BUTTON' && e.textContent === 'Add login').listeners.click();
   assert.equal(sent.at(-1).type, 'logins-add'); assert.equal(sent.at(-1).label, 'Another');

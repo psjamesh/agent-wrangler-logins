@@ -1,18 +1,12 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { refreshMirror } from './codex-mirror.js';
-import { captureCommand, watchCapture, TOKEN_RE, shellQuote } from './claude-token.js';
+import { loginCommand } from './claude-config.js';
+import { shellQuote } from './persistence.js';
+import { AGENT_LABEL, platformRefusal } from './launch.js';
 
-const captures = new WeakMap();
-function stopCapture(store, slug) {
-  captures.get(store)?.get(slug)?.();
-  captures.get(store)?.delete(slug);
-  fs.rmSync(path.join(store.dir(slug), 'claude-capture.txt'), { force: true });
-  fs.rmSync(path.join(store.dir(slug), 'claude-scratch'), { recursive: true, force: true });
-}
-export function stopCaptures(store) {
-  for (const slug of captures.get(store)?.keys() || []) stopCapture(store, slug);
-  captures.delete(store);
+const terminals = new WeakMap();
+function terminalsFor(store) {
+  if (!terminals.has(store)) terminals.set(store, new Map());
+  return terminals.get(store);
 }
 
 export const loginsAddHandler = {
@@ -21,77 +15,66 @@ export const loginsAddHandler = {
 };
 export const loginsRemoveHandler = {
   type: 'logins-remove',
-  async handler({ slug, reqId }, host) {
-    const store = host.stores.logins;
-    stopCapture(store, slug);
-    store.remove(slug);
-    await publish(host, reqId);
-  },
+  async handler({ slug, reqId }, host) { host.stores.logins.remove(slug); await publish(host, reqId); },
 };
 export const loginsForgetHandler = {
   type: 'logins-forget',
-  async handler({ slug, provider, reqId }, host) {
-    const store = host.stores.logins;
-    if (provider === 'claude') stopCapture(store, slug);
-    store.forget(slug, provider);
-    await publish(host, reqId);
-  },
+  async handler({ slug, provider, reqId }, host) { host.stores.logins.forget(slug, provider); await publish(host, reqId); },
 };
 export const loginsLoginHandler = {
   type: 'logins-login',
   async handler({ slug, provider, reqId }, host) {
     const store = host.stores.logins;
-    if (!store.get(slug)) throw new Error(`login "${store.labelFor(slug)}" no longer exists`);
+    const login = store.get(slug);
+    if (!login) throw new Error(`login "${store.labelFor(slug)}" no longer exists`);
+    const platform = platformRefusal(login.label);
+    if (platform) throw new Error(platform);
     let command;
     if (provider === 'codex') {
       refreshMirror(store.codexHome(slug));
       command = `CODEX_HOME=${shellQuote(store.codexHome(slug))} codex login`;
-    } else if (provider === 'claude') {
-      stopCapture(store, slug);
-      const capture = path.join(store.dir(slug), 'claude-capture.txt');
-      fs.writeFileSync(capture, '', { mode: 0o600 });
-      fs.chmodSync(capture, 0o600);
-      if (!captures.has(store)) captures.set(store, new Map());
-      captures.get(store).set(slug, watchCapture({
-        loginDir: store.dir(slug),
-        onError: (err) => { captures.get(store)?.delete(slug); host.broadcast({ kind: 'logins-error', error: err.message }); },
-        onToken: async (token) => { store.setClaudeToken(slug, token); captures.get(store)?.delete(slug); await publish(host, reqId); },
-      }));
-      command = captureCommand({ loginDir: store.dir(slug) });
-    } else throw new Error('Invalid login provider');
-    try { await host.terminals.create({ cwd: store.dir(slug), command }); }
-    catch (err) { if (provider === 'claude') stopCapture(store, slug); throw err; }
+    } else if (provider === 'claude') command = loginCommand(store.setUpClaude(slug));
+    else throw new Error('Invalid login provider');
+    const { terminalId } = await host.terminals.create({
+      cwd: store.dir(slug), command, presentation: 'dialog', title: `${AGENT_LABEL[provider]} login: ${login.label}`, key: `${provider}:${slug}`,
+    });
+    terminalsFor(store).set(`${provider}:${slug}`, terminalId);
     await publish(host, reqId);
   },
 };
-export const loginsSetClaudeTokenHandler = {
-  type: 'logins-set-claude-token',
-  async handler({ slug, token, reqId }, host) {
-    const value = typeof token === 'string' ? token.trim() : '';
-    if (value.match(TOKEN_RE)?.[0] !== value || !value) throw new Error('That does not look like a Claude setup-token');
-    host.stores.logins.setClaudeToken(slug, value);
-    stopCapture(host.stores.logins, slug);
-    await publish(host, reqId);
-  },
-};
-const MUTATIONS = [loginsAddHandler, loginsRemoveHandler, loginsForgetHandler, loginsLoginHandler, loginsSetClaudeTokenHandler];
+const MUTATIONS = [loginsAddHandler, loginsRemoveHandler, loginsForgetHandler, loginsLoginHandler];
 
-export function metadata(host, reqId) {
-  return { kind: 'logins', ...(reqId === undefined ? {} : { reqId }), logins: host.stores.logins.list() };
+async function withTerminals(host, logins) {
+  const open = terminalsFor(host.stores.logins);
+  const alive = async (key) => {
+    const id = open.get(key);
+    if (!id) return false;
+    try { if (await host.terminals.alive(id)) return true; } catch {}
+    open.delete(key);
+    return false;
+  };
+  return Promise.all(logins.map(async (login) => ({
+    ...login,
+    claude: { ...login.claude, terminal: await alive(`claude:${login.slug}`) },
+    codex: { ...login.codex, terminal: await alive(`codex:${login.slug}`) },
+  })));
+}
+export async function metadata(host, reqId) {
+  return { kind: 'logins', ...(reqId === undefined ? {} : { reqId }), logins: await withTerminals(host, host.stores.logins.list()) };
 }
 export async function publish(host, reqId) {
-  host.broadcast(metadata(host, reqId));
+  host.broadcast(await metadata(host, reqId));
   await host.rebuild();
 }
 export const HANDLERS = [
-  { type: 'logins-get', handler(msg, host, reply) {
-    try { reply(metadata(host, msg.reqId)); }
+  { type: 'logins-get', async handler(msg, host, reply) {
+    try { reply(await metadata(host, msg.reqId)); }
     catch { reply({ kind: 'logins-error', reqId: msg.reqId, error: 'Could not load logins. Reconnect and try again.' }); }
   } },
   ...MUTATIONS.map(({ type, handler }) => ({ type, async handler(msg, host, reply) {
     try {
       await handler(msg, host);
-      reply(metadata(host, msg.reqId));
+      reply(await metadata(host, msg.reqId));
     } catch (err) {
       reply({ kind: 'logins-error', reqId: msg.reqId, error: err.message });
     }

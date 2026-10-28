@@ -18,23 +18,83 @@ test('slug names, duplicate slugs, fresh providers and safe paths', (t) => {
   assert.throws(() => s.slugFor(''), /A login needs a name/);
   assert.deepEqual(s.add('Personal'), { slug: 'personal', label: 'Personal' });
   assert.throws(() => s.add('personal'), { message: 'A login called "personal" already exists' });
-  assert.deepEqual(s.list()[0].claude, { present: false, capturedAt: null });
+  assert.deepEqual(s.list()[0].claude, { present: false, plaintext: false, oldToken: false });
   assert.deepEqual(s.list()[0].codex, { present: false, email: null });
   for (const slug of ['../escape', '/tmp/escape', '', '__proto__']) assert.throws(() => s.dir(slug));
 });
 
-test('tokens are private, nonempty and absent from snapshots', (t) => {
+test('Claude setup makes one canonical, stable config dir per login', (t) => {
+  const s = fixture(t); s.add('Personal'); s.add('Other');
+  assert.equal(s.claudeDir('personal'), null);
+  const dir = s.setUpClaude('personal');
+  assert.equal(dir, fs.realpathSync(dir));
+  assert.ok(dir.startsWith(fs.realpathSync(s.dir('personal')) + path.sep));
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assert.equal(s.setUpClaude('personal'), dir);
+  assert.equal(new LoginStore(s.root).claudeDir('personal'), dir);
+  assert.notEqual(s.setUpClaude('other'), dir);
+  assert.deepEqual(s.get('personal').claude, { present: true, plaintext: false, oldToken: false });
+  fs.writeFileSync(path.join(dir, '.credentials.json'), 'fixture-private');
+  assert.equal(s.get('personal').claude.plaintext, true);
+  assert.ok(!JSON.stringify(s.snapshot()).includes(dir));
+});
+
+test('a symlinked data dir resolves to the same canonical Claude dir', (t) => {
+  const real = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-logins-real-'));
+  const link = `${real}-link`;
+  fs.symlinkSync(real, link);
+  t.after(() => { fs.unlinkSync(link); fs.rmSync(real, { recursive: true, force: true }); });
+  const viaLink = new LoginStore(link); viaLink.add('Personal');
+  const dir = viaLink.setUpClaude('personal');
+  assert.ok(dir.startsWith(fs.realpathSync(real)));
+  assert.equal(new LoginStore(real).claudeDir('personal'), dir);
+  assert.equal(new LoginStore(real).setUpClaude('personal'), dir);
+});
+
+test('forgetting Claude removes only its config dir, keeps the old token file and the default folder, and a new setup gets a new dir', (t) => {
   const s = fixture(t); s.add('Personal');
-  assert.throws(() => s.readClaudeToken('personal'), /no usable Claude token/);
-  s.setClaudeToken('personal', 'fixture-token');
-  assert.equal(fs.statSync(s.claudeTokenPath('personal')).mode & 0o777, 0o600);
-  assert.equal(s.readClaudeToken('personal'), 'fixture-token');
-  assert.ok(s.get('personal').claude.capturedAt);
-  assert.ok(!JSON.stringify(s.snapshot()).includes('fixture-token'));
-  fs.writeFileSync(s.claudeTokenPath('personal'), '  ');
-  assert.throws(() => s.readClaudeToken('personal'), /no usable Claude token/);
+  fs.writeFileSync(s.claudeTokenPath('personal'), 'fixture-private', { mode: 0o600 });
+  const shared = path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', 'kept.jsonl');
+  fs.writeFileSync(shared, '{}');
+  const dir = s.setUpClaude('personal');
+  assert.equal(s.get('personal').claude.oldToken, true);
   s.forget('personal', 'claude');
-  assert.deepEqual(s.get('personal').claude, { present: false, capturedAt: null });
+  assert.equal(fs.existsSync(dir), false);
+  assert.equal(fs.existsSync(shared), true);
+  assert.equal(fs.readFileSync(s.claudeTokenPath('personal'), 'utf8'), 'fixture-private');
+  assert.deepEqual(s.get('personal').claude, { present: false, plaintext: false, oldToken: true });
+  const next = s.setUpClaude('personal');
+  assert.notEqual(next, dir);
+  s.remove('personal');
+  assert.equal(fs.existsSync(next), false);
+  assert.equal(fs.existsSync(shared), true);
+});
+
+test('a Claude config entry replaced by a link is refused and never followed by Forget', (t) => {
+  const s = fixture(t); s.add('Personal');
+  const dir = s.setUpClaude('personal');
+  const keep = path.join(process.env.CLAUDE_CONFIG_DIR, 'keep.txt'); fs.writeFileSync(keep, 'fixture');
+  t.after(() => fs.rmSync(keep, { force: true }));
+  fs.rmSync(dir, { recursive: true });
+  fs.symlinkSync(process.env.CLAUDE_CONFIG_DIR, dir);
+  assert.throws(() => s.claudeDir('personal'), /not a directory/);
+  assert.throws(() => s.forget('personal', 'claude'), /not a directory/);
+  assert.equal(fs.readFileSync(keep, 'utf8'), 'fixture');
+  fs.unlinkSync(dir);
+});
+
+test('setup refuses when the default folder cannot provide required links or readable settings', (t) => {
+  const s = fixture(t); s.add('Personal');
+  const settings = path.join(process.env.CLAUDE_CONFIG_DIR, 'settings.json');
+  fs.writeFileSync(settings, '{broken');
+  t.after(() => fs.rmSync(settings, { force: true }));
+  assert.throws(() => s.setUpClaude('personal'), /Cannot read .*settings\.json/);
+  assert.deepEqual(fs.readdirSync(s.dir('personal')), ['login.json']);
+  fs.rmSync(settings);
+  const sessions = path.join(process.env.CLAUDE_CONFIG_DIR, 'sessions');
+  fs.renameSync(sessions, `${sessions}.moved`);
+  t.after(() => fs.renameSync(`${sessions}.moved`, sessions));
+  assert.throws(() => s.setUpClaude('personal'), /Claude sessions cannot be shared/);
 });
 
 test('Codex status decodes email but never includes credentials', (t) => {
@@ -96,6 +156,8 @@ test('private atomic writes replace files without leftover temporary files', asy
 test('malformed metadata cannot be forwarded as arbitrary Settings data', (t) => {
   const s = fixture(t); s.add('Personal');
   fs.writeFileSync(path.join(s.dir('personal'), 'login.json'), JSON.stringify({ label: { secret: 'fixture-private' } }));
+  assert.throws(() => s.list(), /Invalid login metadata/);
+  fs.writeFileSync(path.join(s.dir('personal'), 'login.json'), JSON.stringify({ label: 'Personal', claudeDir: '../../escape' }));
   assert.throws(() => s.list(), /Invalid login metadata/);
   fs.writeFileSync(path.join(s.dir('personal'), 'login.json'), JSON.stringify({ label: 'Personal' }));
   fs.writeFileSync(path.join(s.root, 'removed.json'), JSON.stringify({ personal: { secret: 'fixture-private' } }));

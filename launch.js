@@ -1,6 +1,8 @@
 import { refreshMirror } from './codex-mirror.js';
+import { AUTH_OVERRIDES, linkShared, overridesIn, plaintextCredentials } from './claude-config.js';
 
 export const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' };
+const PLATFORM_LABEL = { linux: 'Linux', win32: 'Windows', freebsd: 'FreeBSD', openbsd: 'OpenBSD', sunos: 'SunOS', aix: 'AIX' };
 const reported = new Set();
 const bindingFailures = new WeakMap();
 
@@ -14,6 +16,24 @@ function refusal(store, slug, agent, label) {
   if (!login[agent].present) return `login "${label}" has no ${AGENT_LABEL[agent]} login`;
   return null;
 }
+export function platformRefusal(label, platform = process.platform) {
+  return platform === 'darwin' ? null : `login "${label}" works only on macOS, not ${PLATFORM_LABEL[platform] || platform}`;
+}
+function runtimeRefusal(runtime, label) {
+  return runtime && runtime !== 'local' ? `login "${label}" runs Claude only on the local runtime, not "${runtime}"` : null;
+}
+function claudeContext(store, slug, label, reason) {
+  const dir = store.claudeDir(slug);
+  if (!dir) return { refuse: `login "${label}" has no Claude login` };
+  const { unready } = linkShared(dir);
+  if (unready.length) return { refuse: `login "${label}": Claude ${unready.join(' and ')} cannot be shared from the default Claude folder` };
+  if (reason === 'headless') {
+    const set = overridesIn(process.env);
+    if (set.length) return { refuse: `login "${label}": the Agent Wrangler server environment sets ${set.join(', ')}` };
+  }
+  if (plaintextCredentials(dir)) console.warn(`[logins] login "${label}" keeps its Claude credential in a plaintext .credentials.json`);
+  return { env: { CLAUDE_CONFIG_DIR: dir }, refuseIfSet: AUTH_OVERRIDES };
+}
 
 export function prepare({ agent, spawnedBy, ext, runtime, ownLaunch, host }) {
   let label = 'selected';
@@ -25,12 +45,16 @@ export function prepare({ agent, spawnedBy, ext, runtime, ownLaunch, host }) {
     label = store.labelFor(slug);
     const reason = refusal(store, slug, agent, label);
     if (reason) return { abort: reason };
-    if (ownLaunch) return { abort: `login "${label}" cannot be used with runtime "${runtime}"` };
-    if (agent === 'claude') store.readClaudeToken(slug);
+    const platform = platformRefusal(label);
+    if (platform) return { abort: platform };
+    if (agent === 'claude') {
+      const remote = runtimeRefusal(runtime, label);
+      if (remote) return { abort: remote };
+    } else if (ownLaunch) return { abort: `login "${label}" cannot be used with runtime "${runtime}"` };
   } catch (err) { return { abort: `login "${label}": ${err.message}` }; }
 }
 
-export function launchContext({ sid, agent, reason, parentId, ext, host }) {
+export function launchContext({ sid, agent, runtime, reason, parentId, ext, host }) {
   let label = 'selected';
   try {
     const store = host.stores.logins;
@@ -44,8 +68,14 @@ export function launchContext({ sid, agent, reason, parentId, ext, host }) {
     label = store.labelFor(slug);
     const denied = refusal(store, slug, agent, label);
     if (denied) return { refuse: denied };
+    const platform = platformRefusal(label);
+    if (platform) return { refuse: platform };
+    if (agent === 'claude') {
+      const remote = runtimeRefusal(runtime, label);
+      if (remote) return { refuse: remote };
+    }
     if (reason === 'fork' && !store.loginFor(sid)) store.bind(sid, slug);
-    if (agent === 'claude') return { env: { CLAUDE_CODE_OAUTH_TOKEN: store.readClaudeToken(slug) } };
+    if (agent === 'claude') return claudeContext(store, slug, label, reason);
     const home = store.codexHome(slug);
     const { kept } = refreshMirror(home);
     for (const name of kept) {
