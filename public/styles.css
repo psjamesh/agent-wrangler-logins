@@ -3,7 +3,10 @@
 .logins-field select { flex: 1; min-width: 0; }
 .logins-field select, .logins-field .search-dd { text-transform: none; }
 .logins-field-message, .logins-expiry-warning { color: var(--warning, #c78b26); font-size: 12px; }
-.login-pill { white-space: nowrap; }
+.login-pill { white-space: nowrap; color: var(--snooze-fg); background: color-mix(in srgb, var(--snooze) 16%, var(--surface-2)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--snooze) 45%, transparent); font-weight: 600; }
+.login-pill-icon { display: inline-flex; }
+.login-pill-icon svg { width: 10px; height: 10px; }
+.login-pill.login-pill-removed { color: var(--fg-muted); background: var(--surface-2); box-shadow: none; outline: 1px dashed var(--border); outline-offset: -1px; font-weight: normal; }
 .logins-panel { display: flex; flex-direction: column; gap: 12px; font-size: 13px; }
 .logins-provider > span, .logins-status { font-size: 12px; }
 .logins-entry { padding: 12px; border: 1px solid var(--border, #555); border-radius: 6px; }

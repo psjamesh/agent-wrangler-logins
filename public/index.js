@@ -1,4 +1,5 @@
 const DAY = 86400000;
+const KEY_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/><circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>';
 function node(el, tag, text, className) {
   const child = el.ownerDocument.createElement(tag);
   if (text !== undefined) child.textContent = text;
@@ -51,8 +52,13 @@ function drawPill(el, session, graph) {
   const login = graph?.logins?.logins?.find((l) => l.slug === slug);
   el.replaceChildren();
   if (!slug) return;
-  const pill = node(el, 'span', login?.label || slug, 'card-tag login-pill');
-  if (login?.removed) pill.title = 'This login was removed; relaunch is refused';
+  const label = login?.label || slug;
+  const pill = node(el, 'span', undefined, `card-tag login-pill${login?.removed ? ' login-pill-removed' : ''}`);
+  const icon = node(el, 'span', undefined, 'login-pill-icon');
+  icon.setAttribute('aria-hidden', 'true');
+  icon.innerHTML = KEY_ICON;
+  pill.append(icon, node(el, 'span', login?.removed ? `${label} (removed)` : label, 'login-pill-label'));
+  pill.title = login?.removed ? `Login ${label} was removed; relaunch is refused` : `Login: ${label}`;
   el.appendChild(pill);
 }
 function drawPanel(el, logins) {
