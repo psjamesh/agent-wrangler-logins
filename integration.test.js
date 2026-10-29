@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { pathToFileURL } from 'node:url';
 const checkout = process.env.AW_HOST_CHECKOUT;
-if (!checkout || !path.isAbsolute(checkout)) throw new Error('Set AW_HOST_CHECKOUT to an absolute host checkout with API 1.51.0 and installed dependencies');
+if (!checkout || !path.isAbsolute(checkout)) throw new Error('Set AW_HOST_CHECKOUT to an absolute host checkout with API 1.54.0 and installed dependencies');
 const hostModule = (file) => import(pathToFileURL(path.join(checkout, file)).href);
 const home = os.homedir();
 const { default: extension } = await import('./index.js');
@@ -19,12 +19,14 @@ const { buildHostApi } = await hostModule('server/host-api/index.js');
 const { createEventBus } = await hostModule('server/events.js');
 const { runArchiveReview, ARCHIVE_REVIEW_COMPLETED } = await hostModule('server/archive-review-runner.js');
 
+const KEYRING = `'-c' 'cli_auth_credentials_store="keyring"'`;
+
 function fixture(t, enabled = true) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-login-integration-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new LoginStore(path.join(root, 'logins')); store.add('Personal');
   store.setUpClaude('personal');
-  fs.mkdirSync(store.codexHome('personal')); fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}');
+  store.setUpCodex('personal');
   const registry = loadExtensions({ cfg: { extensions: { logins: enabled } }, builtin: [extension] });
   const sm = new SessionManager(); sm.map.clear(); sm._save = () => {}; sm.refreshAlive = async () => {}; sm.killForSession = async () => {};
   const host = buildHostApi({ id: 'logins', requires: extension.requires, range: extension.engines.wranglerApi, stores: { logins: store }, core: { sessionManager: sm, taskStore: { taskFor: () => null } } });
@@ -44,8 +46,10 @@ for (const agent of ['claude', 'codex']) {
     const { sm, api, store, commands, root } = fixture(t);
     const card = await api.sessions.spawn({ cwd: root, intent: 'fixture', agent, ext: { logins: { login: 'personal' } } });
     assert.equal(store.loginFor(card.sessionId), 'personal');
-    const marker = agent === 'claude' ? `CLAUDE_CONFIG_DIR='${store.claudeDir('personal')}'` : `CODEX_HOME='${store.codexHome('personal')}'`;
+    const marker = agent === 'claude' ? `CLAUDE_CONFIG_DIR='${store.claudeDir('personal')}'` : `CODEX_HOME='${store.codexDir('personal')}'`;
     assert.ok(commands[0].includes(marker));
+    if (agent === 'codex') assert.ok(commands[0].includes(KEYRING));
+    else assert.ok(!commands[0].includes('cli_auth_credentials_store'));
     if (agent === 'claude') {
       assert.match(commands[0], /\/bin\/sh -c .*CLAUDE_SECURESTORAGE_CONFIG_DIR\+x.* && /);
       assert.doesNotMatch(commands[0], /TOKEN=|API_KEY=|fixture-private/);
@@ -61,10 +65,12 @@ for (const agent of ['claude', 'codex']) {
     assert.ok(commands[1].includes(marker));
     const fork = await sm.fork({ sourceId: liveId, parentId: card.sessionId, parentEntry: sm.entryFor(card.sessionId), cwd: root });
     assert.ok(commands[2].includes(marker));
+    if (agent === 'codex') for (const cmd of commands.slice(0, 3)) assert.ok(cmd.includes(KEYRING));
     assert.equal(store.loginFor(fork.sessionId), 'personal');
     const child = await sm.dispatch({ cwd: root, agent, spawnedBy: 'default-parent', ext: { logins: { login: 'personal' } } });
     assert.equal(store.loginFor(child.sessionId), null);
     assert.ok(!commands[3].includes(marker));
+    assert.ok(!commands[3].includes('cli_auth_credentials_store'));
     store.remove('personal');
     await assert.rejects(sm.resume(card.sessionId, root), /login "Personal" no longer exists/);
     await assert.rejects(sm.fork({ sourceId: liveId, parentId: card.sessionId, parentEntry: sm.entryFor(card.sessionId), cwd: root }), /login "Personal" no longer exists/);
@@ -85,13 +91,39 @@ for (const agent of ['claude', 'codex']) {
     await sm.fork({ sourceId: liveId, parentId: card.sessionId, parentEntry: sm.entryFor(card.sessionId), cwd: root });
     assert.equal(commands.length, 3);
     for (const cmd of commands) {
-      assert.ok(!cmd.includes(store.codexHome('personal')));
+      assert.ok(!cmd.includes(store.codexDir('personal')));
       assert.ok(!cmd.includes('CLAUDE_CONFIG_DIR='));
       assert.ok(!cmd.includes('CLAUDE_SECURESTORAGE_CONFIG_DIR'));
       assert.ok(!cmd.includes('CODEX_HOME='));
+      assert.ok(!cmd.includes('cli_auth_credentials_store'));
     }
   });
 }
+
+test('codex: the real host refuses a Codex login on a non-local runtime at dispatch, resume and fork', async (t) => {
+  const { store, options } = fixture(t);
+  store.bind('card', 'personal');
+  for (const runtime of ['devcontainer', 'cloud']) {
+    const refused = `login "Personal" runs Codex only on the local runtime, not "${runtime}"`;
+    assert.deepEqual(await collectPrepare({ sessionId: 'new', agent: 'codex', ext: { logins: { login: 'personal' } }, runtime, ownLaunch: runtime === 'cloud' }, options), { abort: refused, warnings: [] });
+    for (const reason of ['dispatch', 'resume', 'fork']) {
+      await assert.rejects(collectLaunchContext({ sid: reason === 'fork' ? 'forked' : 'card', parentId: 'card', agent: 'codex', runtime, reason }, options), { message: refused });
+    }
+  }
+  assert.deepEqual(await collectPrepare({ sessionId: 'new', agent: 'codex', ext: { logins: { login: 'personal' } }, runtime: 'local', ownLaunch: false }, options), { abort: null, warnings: [] });
+  assert.deepEqual(await collectPrepare({ sessionId: 'new', agent: 'codex', ext: null, runtime: 'devcontainer', ownLaunch: false }, options), { abort: null, warnings: [] });
+});
+
+test('codex: a Codex login launch never touches an earlier codex-home auth.json and writes none of its own', async (t) => {
+  const { api, store, commands, root } = fixture(t);
+  const old = path.join(store.oldCodexHome('personal'), 'auth.json');
+  fs.mkdirSync(path.dirname(old)); fs.writeFileSync(old, 'fixture-private');
+  await api.sessions.spawn({ cwd: root, intent: 'fixture', agent: 'codex', ext: { logins: { login: 'personal' } } });
+  assert.ok(!commands[0].includes('codex-home'));
+  assert.ok(!commands[0].includes('fixture-private'));
+  assert.equal(fs.readFileSync(old, 'utf8'), 'fixture-private');
+  assert.equal(fs.existsSync(path.join(store.codexDir('personal'), 'auth.json')), false);
+});
 
 test('archive review uses the mapped Claude config dir; a Codex-only login skips with a named refusal', async (t) => {
   const { store, sm, options } = fixture(t);
@@ -130,6 +162,7 @@ test('real host validates the standalone manifest and hosts independent Login di
   slots.syncHosts('dispatch.field', [{ host: model, at: 'model' }, { host: advanced, at: 'advanced' }], api);
   const ctx = { mode: 'launcher', draft: { agent: 'codex' } };
   const graph = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true }, codex: { present: false } }], sessions: {} } };
+  const both = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true }, codex: { present: true } }], sessions: {} } };
   slots.update('dispatch.field', ctx, graph);
   const root = make(); const handle = slots.forExtension('launcher', api).api.dispatchFields.mount(root, ctx);
   handle.update(ctx, graph);
@@ -142,6 +175,8 @@ test('real host validates the standalone manifest and hosts independent Login di
   assert.equal(walk(advanced).value, '');
   handle.update({ mode: 'launcher', draft: { agent: 'claude', runtime: 'cloud' } }, graph);
   assert.equal(handle.validate(), '"Personal" runs Claude only on the local runtime, not "Cloud"');
+  handle.update({ mode: 'launcher', draft: { agent: 'codex', runtime: 'cloud' } }, both);
+  assert.equal(handle.validate(), '"Personal" runs Codex only on the local runtime, not "Cloud"');
   handle.unmount(); assert.equal(root.children.length, 0); assert.deepEqual(errors, []);
 });
 
@@ -172,7 +207,7 @@ test('host install, update, uninstall and reinstall preserve stored logins and b
     assert.equal(disclosure.id, 'logins');
     assert.deepEqual(disclosure.capabilities, extension.requires);
     const { readDeclaration } = await hostModule('server/extensions/install.js');
-    assert.equal(readDeclaration(source).range, '^1.51.0');
+    assert.equal(readDeclaration(source).range, '^1.54.0');
     await extConsentHandler.handler({ type: 'ext-consent', tempId: disclosure.tempId, approve: true }, ctx);
     assert.equal(replies.find((f) => f.type === 'ext-install-done')?.installed, true);
   };

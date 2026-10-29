@@ -1,6 +1,5 @@
-import { refreshMirror } from './codex-mirror.js';
+import { loginCommand as codexLoginCommand } from './codex-mirror.js';
 import { loginCommand } from './claude-config.js';
-import { shellQuote } from './persistence.js';
 import { AGENT_LABEL, platformRefusal } from './launch.js';
 
 const terminals = new WeakMap();
@@ -30,10 +29,8 @@ export const loginsLoginHandler = {
     const platform = platformRefusal(login.label);
     if (platform) throw new Error(platform);
     let command;
-    if (provider === 'codex') {
-      refreshMirror(store.codexHome(slug));
-      command = `CODEX_HOME=${shellQuote(store.codexHome(slug))} codex login`;
-    } else if (provider === 'claude') command = loginCommand(store.setUpClaude(slug));
+    if (provider === 'codex') command = codexLoginCommand(store.setUpCodex(slug));
+    else if (provider === 'claude') command = loginCommand(store.setUpClaude(slug));
     else throw new Error('Invalid login provider');
     const { terminalId } = await host.terminals.create({
       cwd: store.dir(slug), command, presentation: 'dialog', title: `${AGENT_LABEL[provider]} login: ${login.label}`, key: `${provider}:${slug}`,

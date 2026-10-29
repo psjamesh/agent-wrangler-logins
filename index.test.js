@@ -24,7 +24,7 @@ test('package and runtime manifest disclose matching capabilities and host API',
   const pkg = JSON.parse(fs.readFileSync(new URL('./package.json', import.meta.url)));
   for (const key of ['id', 'label', 'description', 'author', 'requires', 'engines']) assert.deepEqual(extension[key], pkg.wranglerExtension[key]);
   assert.equal(extension.id, 'logins'); assert.equal(extension.defaultEnabled, false);
-  assert.equal(extension.engines.wranglerApi, '^1.51.0');
+  assert.equal(extension.engines.wranglerApi, '^1.54.0');
   assert.equal(pkg.engines.node, '>=20');
   assert.equal(pkg.type, 'module');
   assert.equal(pkg.dependencies, undefined);
@@ -60,7 +60,6 @@ test('setup and a plaintext fallback publish Claude and Codex metadata to all ta
   fs.writeFileSync(path.join(store.claudeDir('personal'), '.credentials.json'), 'fixture-private');
   await until(() => frames.some((f) => f.logins?.[0]?.claude.plaintext));
   await send('logins-login', { slug: 'personal', provider: 'codex' });
-  fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}');
   await until(() => frames.some((f) => f.logins?.[0]?.codex.present));
   host.terminals.alive = async () => false;
   await until(() => frames.at(-1).logins?.[0]?.claude.terminal === false);

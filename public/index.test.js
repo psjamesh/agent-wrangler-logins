@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import extension from './index.js';
 
 import { dom } from '../test/dom.js';
-const graph = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true, plaintext: false, oldToken: false, terminal: false }, codex: { present: false, email: null, terminal: false } }], sessions: { mapped: 'personal' } } };
+const graph = { logins: { logins: [{ slug: 'personal', label: 'Personal', claude: { present: true, plaintext: false, oldToken: false, terminal: false }, codex: { present: false, oldAuth: false, terminal: false } }], sessions: { mapped: 'personal' } } };
 function setup() {
   const document = dom(); const sent = []; const contributions = {};
   const messages = new Set(); const connects = new Set();
@@ -26,9 +26,11 @@ test('Login field lists Default, reads selection, blocks provider/runtime, reset
   assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'cloud' } }), '"Personal" runs Claude only on the local runtime, not "Cloud"');
   assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'devcontainer' } }), '"Personal" runs Claude only on the local runtime, not "devcontainer"');
   assert.equal(c.validate(el, { draft: { agent: 'claude', runtime: 'local' } }), null);
-  c.update(el, ctx, { logins: { logins: [{ ...graph.logins.logins[0], codex: { present: true, email: null } }], sessions: {} } });
-  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'cloud' } }), '"Personal" cannot be used with runtime "Cloud"');
-  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'devcontainer' } }), null);
+  c.update(el, ctx, { logins: { logins: [{ ...graph.logins.logins[0], codex: { present: true, oldAuth: false } }], sessions: {} } });
+  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'cloud' } }), '"Personal" runs Codex only on the local runtime, not "Cloud"');
+  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'devcontainer' } }), '"Personal" runs Codex only on the local runtime, not "devcontainer"');
+  assert.equal(c.validate(el, { draft: { agent: 'codex', runtime: 'local' } }), null);
+  assert.equal(c.validate(el, { draft: { agent: 'codex' } }), null);
   c.update(el, { draft: { agent: 'claude' } }, { logins: { logins: [], sessions: {} } });
   assert.match(c.validate(el, { draft: { agent: 'claude' } }), /no longer exists/);
   c.open(el); assert.equal(select.value, ''); assert.deepEqual(c.ext(el), { login: null });
@@ -50,7 +52,7 @@ test('pill draws mapped and removed labels; panel offers native login, Reopen an
   assert.equal(pill.textContent, '');
   const panel = make(); contributions['settings.panel'].mount(panel, api); emit({ kind: 'logins', logins: graph.logins.logins });
   assert.ok(panel.textContent.includes('Claude: set up · sign-in not verified'));
-  assert.ok(panel.textContent.includes('Codex: not logged in'));
+  assert.ok(panel.textContent.includes('Codex: not set up'));
   assert.equal(walk(panel, (e) => e.tagName === 'INPUT' && e.type === 'password'), undefined);
   assert.ok(!/setup-token|Paste token|expires/.test(panel.textContent));
   const buttons = () => { const out = []; const visit = (e) => { if (e.tagName === 'BUTTON') out.push(e.textContent); e.children.forEach(visit); }; visit(panel); return out; };
@@ -58,10 +60,18 @@ test('pill draws mapped and removed labels; panel offers native login, Reopen an
   walk(panel, (e) => e.tagName === 'BUTTON' && e.textContent === 'Log in').listeners.click();
   assert.deepEqual({ ...sent.at(-1), reqId: undefined }, { type: 'logins-login', slug: 'personal', provider: 'claude', reqId: undefined });
   const login = graph.logins.logins[0];
-  emit({ kind: 'logins', logins: [{ ...login, claude: { present: true, plaintext: true, oldToken: true, terminal: true }, codex: { present: false, terminal: true } }] });
+  emit({ kind: 'logins', logins: [{ ...login, claude: { present: true, plaintext: true, oldToken: true, terminal: true }, codex: { present: false, oldAuth: true, terminal: true } }] });
   assert.deepEqual(buttons(), ['Remove', 'Reopen terminal', 'Forget', 'Reopen terminal', 'Add login']);
+  assert.ok(panel.textContent.includes('old codex-home/auth.json file is no longer used'));
   assert.ok(panel.textContent.includes('plaintext .credentials.json'));
   assert.ok(panel.textContent.includes('old claude.token file is no longer used'));
+  emit({ kind: 'logins', logins: [{ ...login, codex: { present: true, oldAuth: false, terminal: false } }] });
+  assert.ok(panel.textContent.includes('Codex: set up · sign-in not verified'));
+  assert.ok(!panel.textContent.includes('codex-home'));
+  assert.deepEqual(buttons(), ['Remove', 'Log in', 'Forget', 'Log in', 'Forget', 'Add login']);
+  const codexRow = walk(panel, (e) => e.className === 'logins-provider' && e.textContent.startsWith('Codex'));
+  walk(codexRow, (e) => e.tagName === 'BUTTON' && e.textContent === 'Log in').listeners.click();
+  assert.deepEqual({ ...sent.at(-1), reqId: undefined }, { type: 'logins-login', slug: 'personal', provider: 'codex', reqId: undefined });
   emit({ kind: 'logins', logins: [{ ...login, claude: { present: false, plaintext: false, oldToken: false, terminal: false } }] });
   assert.ok(panel.textContent.includes('Claude: not set up'));
   assert.deepEqual(buttons(), ['Remove', 'Log in', 'Log in', 'Add login']);
@@ -94,9 +104,9 @@ test('Settings requests initial state, uses scoped metadata without graph update
 test('two Settings tabs receive live authentication metadata; errors are scoped and recoverable', () => {
   const tabs = [setup(), setup()];
   for (const tab of tabs) { tab.el = tab.make(); tab.contributions['settings.panel'].mount(tab.el, tab.api); }
-  const logins = [{ ...graph.logins.logins[0], codex: { present: true, email: 'you@example.com' } }];
+  const logins = [{ ...graph.logins.logins[0], codex: { present: true, oldAuth: false } }];
   for (const tab of tabs) tab.emit({ kind: 'logins', reqId: tab.sent.at(-1).reqId, logins });
-  for (const tab of tabs) assert.ok(tab.el.textContent.includes('Codex: logged in as you@example.com'));
+  for (const tab of tabs) assert.ok(tab.el.textContent.includes('Codex: set up · sign-in not verified'));
   const tab = tabs[0];
   walk(tab.el, (e) => e.textContent === 'Remove' && e.tagName === 'BUTTON').listeners.click();
   const request = tab.sent.at(-1);

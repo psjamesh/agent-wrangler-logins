@@ -4,7 +4,7 @@ Run a session on a stored second Claude or Codex login. Choose **Login** under *
 
 ## Install
 
-Requires macOS, Agent Wrangler host API **^1.51.0**, Node **20 or later**, and the Claude or Codex CLI. On any other platform, **Log in** and every launch on a login are refused, naming the platform; **Default** launches are unaffected.
+Requires macOS, Agent Wrangler host API **^1.54.0**, Node **20 or later**, and the Claude or Codex CLI. On any other platform, **Log in** and every launch on a login are refused, naming the platform; **Default** launches are unaffected.
 
 In **Settings → Extensions → + Add extension**, enter **psjamesh/agent-wrangler-logins**, review the capabilities, install, and enable **Logins**. The package and runtime manifest request:
 
@@ -22,13 +22,17 @@ Open **Settings → Extensions → Logins**, enter a name and choose **Add login
 **Log in** opens a terminal dialog over Settings with the sign-in command typed but not run. Press Enter to run it. Closing the dialog leaves the terminal running, and **Reopen terminal** shows it again. A terminal that exits is not taken as a successful sign-in.
 
 - **Claude:** **Log in** gives the login its own Claude config folder and starts `claude` there with `CLAUDE_CONFIG_DIR` set. Finish Claude's first-run steps and its browser sign-in in the dialog. Claude stores and refreshes the credential itself, in a Keychain entry tied to that folder. Logins never reads it. The command first checks the shell for the variables listed under [Refused overrides](#refused-overrides) and stops, naming them, if any is set. To sign in again later, choose **Log in** and run `/login`.
-- **Codex:** choose **Log in**, press Enter, and finish `codex login`. Codex stores its credentials in the login's mirror home. Shared configuration and session rollouts remain visible to the board; authentication and private runtime sockets stay separate.
+- **Codex:** **Log in** gives the login its own Codex home folder and runs `codex login` there with `CODEX_HOME` set and `-c cli_auth_credentials_store="keyring"`, then `codex login status` with the same setting so you can see the result. With that setting Codex keeps the credential in a Keychain entry tied to the folder. Logins never reads the entry, and never points Codex at a folder that already has an `auth.json`, because Codex deletes that file when it saves to the Keychain. To sign in again later, choose **Log in** again.
 
-The panel shows a Claude login as **set up · sign-in not verified**. Logins does not check which account Claude signed in to.
+The panel shows each provider as **set up · sign-in not verified**. Logins does not check which account Claude or Codex signed in to.
 
 If the Keychain can't be written, Claude falls back to a plaintext `.credentials.json` in the login's folder. The panel warns when that file exists, and each launch on that login logs a warning. The launch still runs. Logins can't stop Claude writing that file, and it only notices it at the next check.
 
-A login set up with an earlier version of Logins may have a `claude.token` file. It is no longer used, the panel says so, and Logins leaves it on disk.
+A login set up with an earlier version of Logins may have a `claude.token` file or a `codex-home/auth.json` file. Neither is used any more, the panel says so, and Logins leaves both on disk without reading them. The login needs **Log in** again for that provider.
+
+### What a Codex login shares
+
+The login's Codex home links every entry in the default Codex folder, including `config.toml`, sessions and history, except `auth.json`, `tmp`, lock folders and the private runtime sockets. The default Codex folder is `CODEX_HOME` for the Agent Wrangler server, or `~/.codex`. Logins never creates, changes or deletes anything in it, and never sets the credential store there: the keyring setting is passed on the command line of each launch on a login, so **Default** sessions keep their own setting. Sessions on a login do write into the default folder through the links, as any Codex session does.
 
 ### What a Claude login shares
 
@@ -79,15 +83,15 @@ Logins checks the files once, as the launch starts. It can't see:
 
 A launch that passes the check is not proof of which account Claude uses.
 
-**Update or renew:** choose **Forget** for the provider, then **Log in** again. This replaces only that provider's sign-in and keeps the login's name and card bindings. Forgetting Claude deletes the login's Claude folder, and the next **Log in** creates a new one with a new Keychain entry. The old Keychain entry is not deleted; to remove it, run `claude auth logout` in the dialog before choosing **Forget**. Codex refreshes its credentials automatically during use.
+**Update or renew:** choose **Forget** for the provider, then **Log in** again. This replaces only that provider's sign-in and keeps the login's name and card bindings. Forgetting deletes the login's Claude folder or Codex home, and the next **Log in** creates a new one with a new Keychain entry. The old Keychain entry is not deleted. To remove it, before choosing **Forget**, run `claude auth logout` in the Claude dialog, or in the Codex dialog change `login;` in the typed command to `logout;` before pressing Enter. Codex refreshes its credentials automatically during use.
 
-Settings requests metadata when opened and after reconnecting. Adding, forgetting, removing and finishing setup updates every open tab. Only labels, provider status, Codex email and warnings are delivered to the panel. Errors appear in the panel; reconnect or reopen it to retry a read.
+Settings requests metadata when opened and after reconnecting. Adding, forgetting, removing and finishing setup updates every open tab. Only labels, provider status and warnings are delivered to the panel. Errors appear in the panel; reconnect or reopen it to retry a read.
 
 ## Run a session
 
 In the dispatch dialog, expand **Advanced options** to find **Login**, which opens on **Default** each time. Select a login and a model supported by it. An extension that hosts the standard dispatch fields offers the same **Login** choice and validation.
 
-A login without the chosen provider blocks dispatch. A Claude login runs only on the local runtime: dispatch, resume and fork on any other runtime, including devcontainer, are refused. For Codex, runtimes that build their own launch command are blocked because they cannot apply the login environment; local, devcontainer and runtimes that wrap the standard launch command can use Codex logins.
+A login without the chosen provider blocks dispatch. A login runs Claude and Codex only on the local runtime: dispatch, resume and fork on any other runtime, including devcontainer, are refused, because the login's Keychain entry is on this Mac.
 
 A login pill, with a key icon and an amber wash, names a mapped card’s login. A removed login’s pill turns grey with a dashed outline and reads **(removed)**. Resume and fork retain that login. Every spawned child inherits its parent’s login, including **Default**, regardless of supplied dispatch extension data. A cross-provider child needs both providers in its inherited login.
 
@@ -97,9 +101,9 @@ Archive memory review uses the card’s Claude login. A Codex-only login refuses
 
 ## Acceptance on an installed package
 
-Run these on macOS after installing or updating Logins from **Settings → Extensions**. Use two Claude test accounts, A and B, that are not your everyday account. Don't record tokens, credentials or Keychain contents while you work. A terminal that exits is not proof of a sign-in: check the account with `/status` in the session.
+Run these on macOS after installing or updating Logins from **Settings → Extensions**. Use two Claude test accounts, A and B, and two Codex test accounts, C and D, none of them your everyday accounts. Don't record tokens, credentials or Keychain contents while you work. A terminal that exits is not proof of a sign-in: check the account with `/status` in the session.
 
-Before you start, run `claude auth status` in a plain terminal and note Default's account. Also note the modification time of `~/.claude/settings.json` with `ls -l`.
+Before you start, run `claude auth status` and `codex login status` in a plain terminal and note Default's accounts. Also note the modification time of `~/.claude/settings.json` with `ls -l`.
 
 | Check | Do | Expect |
 | --- | --- | --- |
@@ -110,14 +114,18 @@ Before you start, run `claude auth status` in a plain terminal and note Default'
 | Plaintext fallback | Create an empty `.credentials.json` in **Test B**'s `claude-<id>` folder, then dispatch on **Test B**. Delete the file afterwards. | The panel warns about a plaintext credential. The server log shows `keeps its Claude credential in a plaintext .credentials.json`, and the launch still runs. |
 | Resume and fork | On a **Test A** card, send a message, suspend and resume the card, then fork it. Fork a **Default** card too. | The resumed card and its fork keep the **Test A** pill and show A in `/status`. The **Default** fork has no pill and shows Default's account. |
 | Settings refusal | In a test project, add `{"env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:9"}}` to `.claude/settings.local.json` and dispatch on **Test A** there. | The dispatch is refused, naming that file and `ANTHROPIC_BASE_URL`. A **Default** dispatch there is not affected by Logins. |
+| Codex keyring sign-in | Run `shasum -a 256 ~/.codex/config.toml`. Choose **Log in** for Codex on **Test A**, press Enter and sign in as C. Run the checksum again, then `ls -A` the login's `codex-<id>` folder. | The dialog's `codex login status` reports a sign-in. The checksum is unchanged. The folder has no `auth.json`. Keychain Access shows a `Codex Auth` item whose account starts with `cli|`; don't open it. |
+| Codex separation | Sign **Test B** in to Codex as D. Run a Codex session on each login at the same time, then a **Default** Codex session. Run `codex login status` in a plain terminal. | Each login session shows its own account in `/status`. The **Default** session and the terminal show Default's account. Keychain Access shows one `Codex Auth` item per login. |
+| Earlier Codex sign-in | On a login made with an earlier version of Logins, note `shasum -a 256` of its `codex-home/auth.json`. Choose **Log in** for Codex and sign in. | The panel says the old file is no longer used. The file's checksum is unchanged. Sessions on the login use the new sign-in. |
+| Codex resume, fork and runtime | Resume and fork a **Test A** Codex card. Then choose the devcontainer runtime and a Codex model on **Test A**. | The resumed card and its fork keep the **Test A** pill and show C in `/status`. The devcontainer dispatch is refused, naming the runtime. |
 
-To clean up, run `claude auth logout` in each test login's dialog, then **Remove** the logins.
+To clean up, run `claude auth logout` in each test login's Claude dialog and, in its Codex dialog, change `login;` to `logout;` before pressing Enter. Then **Remove** the logins.
 
 ## Disable, update and uninstall
 
 Off, every session relaunches on the CLIs’ own login. Running sessions keep their environment until relaunched. Stored credentials and card bindings remain; enabling Logins restores them on the next launch.
 
-Storage lives under `<AW_DATA_DIR>/logins`, or `~/.agent-wrangler/logins` when unset. `AW_DATA_DIR` accepts `~` and `~/…`. Each login owns `login.json`, a mode `0700` `claude-<id>` Claude config folder and a `codex-home` directory. Claude's Keychain entry is tied to the folder's resolved path, so moving the data directory signs the login out. Card bindings are in `sessions.json`; removed labels are in `removed.json`. Writes use private temporary files and atomic replacement.
+Storage lives under `<AW_DATA_DIR>/logins`, or `~/.agent-wrangler/logins` when unset. `AW_DATA_DIR` accepts `~` and `~/…`. Each login owns `login.json`, a mode `0700` `claude-<id>` Claude config folder and a mode `0700` `codex-<id>` Codex home. Each CLI's Keychain entry is tied to its folder's resolved path, so moving the data directory signs the login out. Card bindings are in `sessions.json`; removed labels are in `removed.json`. Writes use private temporary files and atomic replacement.
 
 Updating, reinstalling and uninstalling replace only the extension’s install directory. They preserve login storage and bindings. To erase credentials, use **Forget** or **Remove** before uninstalling, or remove the separate storage directory yourself. The extension never changes the CLIs’ default login files. A launch passes only folder paths, never a credential. Programs running as the same user can still read every login's credentials, so a login is not a security boundary.
 
@@ -131,6 +139,6 @@ npm run docs:check
 AW_HOST_CHECKOUT=/absolute/path/to/agent-wrangler npm run test:integration
 ```
 
-Unit tests need no host checkout and redirect all homes and managed settings paths into temporary directories. Integration tests require an explicit host checkout with API 1.51.0 and installed host dependencies; they exercise the real host manifest, session manager, launch hooks, dispatch-field host and archive review. Settings uses existing scoped control replies, broadcasts and reconnect listeners, and needs no host Settings graph changes.
+Unit tests need no host checkout and redirect all homes and managed settings paths into temporary directories. Integration tests require an explicit host checkout with API 1.54.0 and installed host dependencies; they exercise the real host manifest, session manager, launch hooks, dispatch-field host and archive review. Settings uses existing scoped control replies, broadcasts and reconnect listeners, and needs no host Settings graph changes.
 
 Real sign-in, Keychain behaviour and account separation need a human with a test account. Never copy credentials into screenshots, configuration, graph data, task notes or test logs.

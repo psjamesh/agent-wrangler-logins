@@ -14,7 +14,7 @@ export default {
   description: 'Dispatch a session on another Claude or Codex login while the rest of the board keeps Default.',
   author: 'psjamesh', defaultEnabled: false, dir,
   requires: ['board:rebuild', 'board:broadcast', 'terminals:create', 'sessions:read'],
-  engines: { wranglerApi: '^1.51.0' },
+  engines: { wranglerApi: '^1.54.0' },
   stores: { logins: () => new LoginStore() },
   handlers: HANDLERS,
   hooks: { 'session.prepare': prepare, 'session.launchContext': launchContext },

@@ -19,7 +19,7 @@ test('slug names, duplicate slugs, fresh providers and safe paths', (t) => {
   assert.deepEqual(s.add('Personal'), { slug: 'personal', label: 'Personal' });
   assert.throws(() => s.add('personal'), { message: 'A login called "personal" already exists' });
   assert.deepEqual(s.list()[0].claude, { present: false, plaintext: false, oldToken: false });
-  assert.deepEqual(s.list()[0].codex, { present: false, email: null });
+  assert.deepEqual(s.list()[0].codex, { present: false, oldAuth: false });
   for (const slug of ['../escape', '/tmp/escape', '', '__proto__']) assert.throws(() => s.dir(slug));
 });
 
@@ -97,17 +97,60 @@ test('setup refuses when the default folder cannot provide required links or rea
   assert.throws(() => s.setUpClaude('personal'), /Claude sessions cannot be shared/);
 });
 
-test('Codex status decodes email but never includes credentials', (t) => {
+test('Codex setup makes one fresh, canonical, stable home per login that mirrors the default config', (t) => {
+  const s = fixture(t); s.add('Personal'); s.add('Other');
+  fs.writeFileSync(path.join(process.env.CODEX_HOME, 'config.toml'), 'fixture');
+  assert.equal(s.codexDir('personal'), null);
+  const dir = s.setUpCodex('personal');
+  assert.equal(dir, fs.realpathSync(dir));
+  assert.match(path.basename(dir), /^codex-[0-9a-f]{16}$/);
+  assert.notEqual(dir, fs.realpathSync(s.dir('personal')) + path.sep + 'codex-home');
+  assert.equal(fs.statSync(dir).mode & 0o777, 0o700);
+  assert.equal(s.setUpCodex('personal'), dir);
+  assert.equal(new LoginStore(s.root).codexDir('personal'), dir);
+  assert.notEqual(s.setUpCodex('other'), dir);
+  assert.equal(fs.readlinkSync(path.join(dir, 'config.toml')), path.join(process.env.CODEX_HOME, 'config.toml'));
+  assert.equal(fs.existsSync(path.join(dir, 'auth.json')), false);
+  assert.deepEqual(s.get('personal').codex, { present: true, oldAuth: false });
+  assert.ok(!JSON.stringify(s.snapshot()).includes(dir));
+});
+
+test('an earlier codex-home auth.json is reported by existence only and survives setup, forget and a new setup', (t) => {
   const s = fixture(t); s.add('Personal');
-  fs.mkdirSync(s.codexHome('personal'));
-  const token = `header.${Buffer.from(JSON.stringify({ email: 'you@example.com' })).toString('base64url')}.signature`;
-  fs.writeFileSync(path.join(s.codexHome('personal'), 'auth.json'), JSON.stringify({ tokens: { id_token: token } }));
-  assert.deepEqual(s.get('personal').codex, { present: true, email: 'you@example.com' });
-  assert.ok(!JSON.stringify(s.snapshot()).includes(token));
-  fs.writeFileSync(path.join(s.codexHome('personal'), 'auth.json'), '{}');
-  assert.equal(s.get('personal').codex.email, null);
+  const old = path.join(s.oldCodexHome('personal'), 'auth.json');
+  fs.mkdirSync(path.dirname(old)); fs.writeFileSync(old, 'fixture-private', { mode: 0o000 });
+  assert.deepEqual(s.get('personal').codex, { present: false, oldAuth: true });
+  const dir = s.setUpCodex('personal');
+  assert.notEqual(dir, fs.realpathSync(s.oldCodexHome('personal')));
+  assert.deepEqual(s.get('personal').codex, { present: true, oldAuth: true });
+  assert.ok(!JSON.stringify(s.snapshot()).includes('fixture-private'));
+  const shared = path.join(process.env.CODEX_HOME, 'config.toml');
+  fs.writeFileSync(shared, 'fixture');
   s.forget('personal', 'codex');
-  assert.equal(fs.existsSync(s.codexHome('personal')), false);
+  assert.equal(fs.existsSync(dir), false);
+  assert.deepEqual(s.get('personal').codex, { present: false, oldAuth: true });
+  assert.equal(fs.readFileSync(shared, 'utf8'), 'fixture');
+  const next = s.setUpCodex('personal');
+  assert.notEqual(next, dir);
+  assert.equal(fs.readlinkSync(path.join(next, 'config.toml')), shared);
+  fs.chmodSync(old, 0o600);
+  assert.equal(fs.readFileSync(old, 'utf8'), 'fixture-private');
+  s.remove('personal');
+  assert.equal(fs.existsSync(next), false);
+  assert.equal(fs.readFileSync(shared, 'utf8'), 'fixture');
+});
+
+test('a Codex home replaced by a link is refused and never followed by Forget', (t) => {
+  const s = fixture(t); s.add('Personal');
+  const dir = s.setUpCodex('personal');
+  const keep = path.join(process.env.CODEX_HOME, 'keep.txt'); fs.writeFileSync(keep, 'fixture');
+  t.after(() => fs.rmSync(keep, { force: true }));
+  fs.rmSync(dir, { recursive: true });
+  fs.symlinkSync(process.env.CODEX_HOME, dir);
+  assert.throws(() => s.codexDir('personal'), /Codex home is not a directory/);
+  assert.throws(() => s.forget('personal', 'codex'), /not a directory/);
+  assert.equal(fs.readFileSync(keep, 'utf8'), 'fixture');
+  fs.unlinkSync(dir);
 });
 
 test('bindings persist; removal retains a named tombstone until purge', (t) => {
@@ -159,6 +202,10 @@ test('malformed metadata cannot be forwarded as arbitrary Settings data', (t) =>
   assert.throws(() => s.list(), /Invalid login metadata/);
   fs.writeFileSync(path.join(s.dir('personal'), 'login.json'), JSON.stringify({ label: 'Personal', claudeDir: '../../escape' }));
   assert.throws(() => s.list(), /Invalid login metadata/);
+  for (const codexDir of ['../../escape', 'codex-home', 'claude-0123456789abcdef']) {
+    fs.writeFileSync(path.join(s.dir('personal'), 'login.json'), JSON.stringify({ label: 'Personal', codexDir }));
+    assert.throws(() => s.list(), /Invalid login metadata/);
+  }
   fs.writeFileSync(path.join(s.dir('personal'), 'login.json'), JSON.stringify({ label: 'Personal' }));
   fs.writeFileSync(path.join(s.root, 'removed.json'), JSON.stringify({ personal: { secret: 'fixture-private' } }));
   assert.throws(() => s.snapshot(), /Invalid login/);
