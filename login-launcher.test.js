@@ -18,30 +18,35 @@ function fixture(t, provider) {
 const fs = require('node:fs');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.CALLS, JSON.stringify({ args, dir: process.env.${provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME'} }) + '\\n');
-if (args.at(-1) === 'status') {
+if (args.includes('status')) {
   console.log('Test CLI: authentication status checked');
   process.exit(Number(process.env.STATUS_EXIT || 0));
+}
+if (process.env.INTERACTIVE === '1') {
+  if (args.length) process.exit(8);
+  console.log('Test CLI: select subscription sign-in');
+  if (fs.readFileSync(0, 'utf8').trim() !== 'subscription') process.exit(9);
 }
 console.log('Test CLI: dedicated sign-in');
 process.exit(Number(process.env.LOGIN_EXIT || 0));
 `, { mode: 0o755 });
   const command = (provider === 'claude' ? claudeCommand : codexCommand)(dir);
-  const run = (extra = {}, prefix = '') => spawnSync('/bin/sh', ['-c', prefix + command], {
-    cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, CALLS: calls, ...extra }, encoding: 'utf8',
+  const run = (extra = {}, prefix = '', input) => spawnSync('/bin/sh', ['-c', prefix + command], {
+    input, cwd: root, env: { PATH: `${bin}:/usr/bin:/bin`, HOME: root, CALLS: calls, ...extra }, encoding: 'utf8',
   });
   return { run, command, dir, root, calls: () => fs.existsSync(calls) ? fs.readFileSync(calls, 'utf8').trim().split('\n').map(JSON.parse) : [] };
 }
 
 for (const provider of ['claude', 'codex']) {
-  test(`${provider}: short launcher runs dedicated sign-in then status in the isolated folder with safe quoting`, (t) => {
+  test(`${provider}: short launcher runs native sign-in then status in the isolated folder with safe quoting`, (t) => {
     const f = fixture(t, provider);
     assert.doesNotMatch(f.command, /AUTH_TOKEN|cli_auth_credentials_store|&&|;.*login status/);
     const r = f.run();
     assert.equal(r.status, 0, r.stderr);
-    const prefix = provider === 'claude' ? ['auth'] : ['-c', 'cli_auth_credentials_store="keyring"'];
+    const prefix = provider === 'claude' ? [] : ['-c', 'cli_auth_credentials_store="keyring"'];
     assert.deepEqual(f.calls(), [
-      { args: [...prefix, 'login'], dir: f.dir },
-      { args: [...prefix, provider === 'claude' ? 'status' : 'login', ...(provider === 'codex' ? ['status'] : [])], dir: f.dir },
+      { args: provider === 'claude' ? [] : [...prefix, 'login'], dir: f.dir },
+      { args: provider === 'claude' ? ['auth', 'status', '--text'] : [...prefix, 'login', 'status'], dir: f.dir },
     ]);
     assert.match(r.stdout, /Test CLI: authentication status checked/);
     assert.equal(fs.existsSync(path.join(f.root, 'injected')), false);
@@ -84,4 +89,15 @@ test('Claude refuses every override from the terminal environment by name withou
   assert.equal(r.status, 1);
   assert.match(r.stderr, /ANTHROPIC_API_KEY/);
   assert.deepEqual(f.calls(), []);
+});
+
+test('Claude subscription onboarding receives terminal input and explains how to reach status', (t) => {
+  const f = fixture(t, 'claude');
+  const r = f.run({ INTERACTIVE: '1' }, '', 'subscription\n');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /choose Claude account with subscription/);
+  assert.match(r.stdout, /No API key is needed/);
+  assert.match(r.stdout, /type \/exit/);
+  assert.match(r.stdout, /Test CLI: select subscription sign-in/);
+  assert.match(r.stdout, /Test CLI: authentication status checked/);
 });

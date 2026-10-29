@@ -19,7 +19,7 @@ if (provider === 'claude') {
 
 const label = provider === 'claude' ? 'Claude' : 'Codex';
 const env = { ...process.env, [provider === 'claude' ? 'CLAUDE_CONFIG_DIR' : 'CODEX_HOME']: dir };
-const prefix = provider === 'claude' ? ['auth'] : Object.entries(CODEX_CONFIG).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]);
+const prefix = provider === 'claude' ? [] : Object.entries(CODEX_CONFIG).flatMap(([key, value]) => ['-c', `${key}=${JSON.stringify(value)}`]);
 
 function run(args, step) {
   const result = spawnSync(provider, [...prefix, ...args], { env, stdio: 'inherit' });
@@ -36,7 +36,10 @@ function run(args, step) {
   }
 }
 
-console.log(`${label} sign-in: opening the dedicated login flow…`);
-run(['login'], 'sign-in');
+if (provider === 'claude') {
+  console.log('Claude sign-in: choose Claude account with subscription for Pro, Max, Team, or Enterprise. No API key is needed.');
+  console.log('Complete sign-in in Claude, then type /exit to return here and check authentication status.');
+} else console.log('Codex sign-in: opening the dedicated login flow…');
+run(provider === 'claude' ? [] : ['login'], 'sign-in');
 console.log(`${label} sign-in finished. Checking authentication status…`);
-run(provider === 'claude' ? ['status'] : ['login', 'status'], 'authentication status check');
+run(provider === 'claude' ? ['auth', 'status', '--text'] : ['login', 'status'], 'authentication status check');
