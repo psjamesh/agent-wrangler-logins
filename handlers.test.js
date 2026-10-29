@@ -39,14 +39,13 @@ test('Log in opens a keyed dialog with paths only; Claude runs native login in i
   await send('logins-login', { slug: 'personal', provider: 'codex' });
   assert.deepEqual({ ...calls[0], command: undefined }, { cwd: store.dir('personal'), command: undefined, presentation: 'dialog', title: 'Codex login: Personal', key: 'codex:personal' });
   const home = store.codexDir('personal');
-  const codex = `CODEX_HOME='${home}' codex -c 'cli_auth_credentials_store="keyring"'`;
-  assert.equal(calls[0].command, `${codex} login; ${codex} login status`);
+  assert.ok(calls[0].command.endsWith(`login.js' 'codex' '${home}'`));
   assert.equal(replies.at(-1).logins[0].codex.present, true);
   assert.equal(fs.existsSync(path.join(home, 'auth.json')), false);
   await send('logins-login', { slug: 'personal', provider: 'claude' });
   const dir = store.claudeDir('personal');
   assert.equal(calls[1].presentation, 'dialog'); assert.equal(calls[1].key, 'claude:personal'); assert.equal(calls[1].title, 'Claude login: Personal');
-  assert.ok(calls[1].command.endsWith(`&& CLAUDE_CONFIG_DIR='${dir}' claude`));
+  assert.ok(calls[1].command.endsWith(`login.js' 'claude' '${dir}'`));
   assert.doesNotMatch(calls[1].command, /setup-token|tee|TOKEN=/);
   assert.equal(replies.at(-1).logins[0].claude.present, true);
   await send('logins-login', { slug: 'personal', provider: 'claude' });
