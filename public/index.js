@@ -24,8 +24,7 @@ function message(el, ctx) {
   if (!login[agent]?.present) return `"${label}" has no ${agent === 'claude' ? 'Claude' : 'Codex'} login`;
   const runtimeId = ctx?.draft?.runtime;
   const runtime = state.api.runtimes?.().find((r) => r.id === runtimeId);
-  if (agent === 'claude' && runtimeId && runtimeId !== 'local') return `"${label}" runs Claude only on the local runtime, not "${runtime?.label || runtimeId}"`;
-  if (agent === 'codex' && runtime?.ownLaunch) return `"${label}" cannot be used with runtime "${runtime.label || runtime.id}"`;
+  if (runtimeId && runtimeId !== 'local') return `"${label}" runs ${agent === 'claude' ? 'Claude' : 'Codex'} only on the local runtime, not "${runtime?.label || runtimeId}"`;
   return '';
 }
 function validate(el, ctx) {
@@ -80,19 +79,17 @@ function drawPanel(el, logins) {
       const line = node(el, 'div', undefined, 'logins-provider');
       const status = login[provider];
       const label = provider === 'claude' ? 'Claude' : 'Codex';
-      let text = `${label}: ${status.present ? 'logged in' : 'not logged in'}`;
-      if (provider === 'claude') text = `${label}: ${status.present ? 'set up · sign-in not verified' : 'not set up'}`;
-      else if (status.present && status.email) text += ` as ${status.email}`;
-      line.appendChild(node(el, 'span', text));
+      line.appendChild(node(el, 'span', `${label}: ${status.present ? 'set up · sign-in not verified' : 'not set up'}`));
       const actions = node(el, 'span', undefined, 'logins-actions');
       const send = (type) => () => state.send({ type, slug: login.slug, provider });
       if (status.terminal) actions.appendChild(button(el, 'Reopen terminal', send('logins-login')));
-      else if (!status.present || provider === 'claude') actions.appendChild(button(el, 'Log in', send('logins-login')));
+      else actions.appendChild(button(el, 'Log in', send('logins-login')));
       if (status.present) actions.appendChild(button(el, 'Forget', send('logins-forget')));
       line.appendChild(actions);
       row.appendChild(line);
       if (provider === 'claude' && status.plaintext) row.appendChild(node(el, 'div', 'Claude saved this login’s credential in a plaintext .credentials.json file instead of the Keychain. Sessions still run.', 'logins-warning'));
       if (provider === 'claude' && status.oldToken) row.appendChild(node(el, 'div', 'This login’s old claude.token file is no longer used. Logins leaves it on disk.', 'setting-help'));
+      if (provider === 'codex' && status.oldAuth) row.appendChild(node(el, 'div', 'This login’s old codex-home/auth.json file is no longer used. Logins leaves it on disk.', 'setting-help'));
     }
     el.appendChild(row);
   }

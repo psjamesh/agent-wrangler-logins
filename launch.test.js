@@ -6,6 +6,7 @@ import path from 'node:path';
 import { LoginStore } from './login-store.js';
 import { prepare, launchContext, onBeforeDispatch, onFork, onPurge } from './launch.js';
 import { AUTH_OVERRIDES } from './claude-config.js';
+import { CODEX_CONFIG } from './codex-mirror.js';
 
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'aw-login-launch-'));
@@ -15,8 +16,7 @@ function fixture(t) {
   const work = path.join(root, 'work'); fs.mkdirSync(work);
   const host = { stores: { logins: store }, sessions: { get: (sessionId) => ({ sessionId, cwd: work, worktree: null }) } };
   const give = (agent) => {
-    if (agent === 'claude') return store.setUpClaude('personal');
-    else { fs.mkdirSync(store.codexHome('personal'), { recursive: true }); fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}'); }
+    return agent === 'claude' ? store.setUpClaude('personal') : store.setUpCodex('personal');
   };
   return { store, host, give, work, root };
 }
@@ -30,13 +30,8 @@ for (const agent of ['claude', 'codex']) {
     assert.deepEqual(prepare(base), { abort: `login "Personal" has no ${provider} login` });
     give(agent);
     assert.equal(prepare(base), undefined);
-    if (agent === 'claude') {
-      assert.deepEqual(prepare({ ...base, ownLaunch: true, runtime: 'cloud' }), { abort: 'login "Personal" runs Claude only on the local runtime, not "cloud"' });
-      assert.deepEqual(prepare({ ...base, ownLaunch: false, runtime: 'devcontainer' }), { abort: 'login "Personal" runs Claude only on the local runtime, not "devcontainer"' });
-    } else {
-      assert.deepEqual(prepare({ ...base, ownLaunch: true, runtime: 'cloud' }), { abort: 'login "Personal" cannot be used with runtime "cloud"' });
-      assert.equal(prepare({ ...base, ownLaunch: false, runtime: 'devcontainer' }), undefined);
-    }
+    assert.deepEqual(prepare({ ...base, ownLaunch: true, runtime: 'cloud' }), { abort: `login "Personal" runs ${provider} only on the local runtime, not "cloud"` });
+    assert.deepEqual(prepare({ ...base, ownLaunch: false, runtime: 'devcontainer' }), { abort: `login "Personal" runs ${provider} only on the local runtime, not "devcontainer"` });
     assert.deepEqual(prepare({ ...base, ext: { login: 'missing' } }), { abort: 'login "missing" no longer exists' });
     store.bind('parent', 'personal');
     assert.equal(prepare({ ...base, spawnedBy: 'parent', ext: { login: 'other' } }), undefined);
@@ -53,15 +48,14 @@ for (const agent of ['claude', 'codex']) {
 
   test(`${agent}: dispatch, resume and fork inject only the bound provider environment`, (t) => {
     const { store, host, give } = fixture(t); const dir = give(agent); store.bind('parent', 'personal');
-    const expected = agent === 'claude' ? { env: { CLAUDE_CONFIG_DIR: dir }, refuseIfSet: AUTH_OVERRIDES } : { env: { CODEX_HOME: store.codexHome('personal') } };
+    const expected = agent === 'claude' ? { env: { CLAUDE_CONFIG_DIR: dir }, refuseIfSet: AUTH_OVERRIDES } : { env: { CODEX_HOME: dir }, codexConfig: { cli_auth_credentials_store: 'keyring' } };
     for (const reason of ['dispatch', 'resume', 'fork']) {
       const args = { host, agent, reason, sid: reason === 'fork' ? 'child' : 'parent', parentId: reason === 'fork' ? 'parent' : undefined };
       assert.deepEqual(launchContext(args), expected);
-      if (agent === 'claude') assert.deepEqual(launchContext({ ...args, runtime: 'devcontainer' }), { refuse: 'login "Personal" runs Claude only on the local runtime, not "devcontainer"' });
-      else assert.deepEqual(launchContext({ ...args, runtime: 'devcontainer' }), expected);
+      for (const runtime of ['devcontainer', 'cloud']) assert.deepEqual(launchContext({ ...args, runtime }), { refuse: `login "Personal" runs ${provider} only on the local runtime, not "${runtime}"` });
       assert.deepEqual(launchContext({ host, agent, reason, sid: 'unmapped', parentId: 'default' }), {});
     }
-    if (agent === 'codex') assert.equal(fs.readlinkSync(path.join(store.codexHome('personal'), 'config.toml')), path.join(process.env.CODEX_HOME, 'config.toml'));
+    if (agent === 'codex') assert.equal(fs.readlinkSync(path.join(dir, 'config.toml')), path.join(process.env.CODEX_HOME, 'config.toml'));
     onFork({ sessionId: 'child', parentId: 'parent', host });
     assert.equal(store.loginFor('child'), 'personal');
     onPurge({ sessionId: 'child', host });
@@ -94,6 +88,27 @@ for (const agent of ['claude', 'codex']) {
     for (const reason of ['resume', 'fork']) assert.deepEqual(launchContext({ host, agent, reason, sid: reason === 'fork' ? 'child' : 'parent', parentId: 'parent' }), { refuse: 'login "Personal" no longer exists' });
   });
 }
+
+test('a Codex login launches only with the keyring override in its own fresh home; Default and Claude carry none', (t) => {
+  const { store, host, root } = fixture(t);
+  const old = path.join(store.oldCodexHome('personal'), 'auth.json');
+  fs.mkdirSync(path.dirname(old)); fs.writeFileSync(old, 'fixture-private');
+  store.bind('card', 'personal');
+  assert.deepEqual(launchContext({ host, sid: 'card', agent: 'codex', reason: 'dispatch' }), { refuse: 'login "Personal" has no Codex login' });
+  const home = store.setUpCodex('personal');
+  for (const reason of ['dispatch', 'resume', 'fork']) {
+    const context = launchContext({ host, sid: reason === 'fork' ? 'forked' : 'card', parentId: 'card', agent: 'codex', reason, runtime: 'local' });
+    assert.deepEqual(context, { env: { CODEX_HOME: home }, codexConfig: CODEX_CONFIG });
+    assert.notEqual(context.codexConfig, CODEX_CONFIG);
+  }
+  assert.deepEqual(CODEX_CONFIG, { cli_auth_credentials_store: 'keyring' });
+  assert.deepEqual(launchContext({ host, sid: 'default-card', agent: 'codex', reason: 'dispatch' }), {});
+  store.setUpClaude('personal');
+  assert.equal(launchContext({ host, sid: 'card', agent: 'claude', reason: 'dispatch' }).codexConfig, undefined);
+  assert.equal(fs.readFileSync(old, 'utf8'), 'fixture-private');
+  assert.equal(fs.existsSync(path.join(home, 'auth.json')), false);
+  assert.ok(!JSON.stringify(launchContext({ host, sid: 'card', agent: 'codex', reason: 'resume' })).includes(root + '/personal/codex-home'));
+});
 
 test('headless resolves card before ext, refuses Codex-only Claude review, uses ext without a mapping', (t) => {
   const { store, host, give } = fixture(t); const dir = give('claude'); store.bind('card', 'personal');
@@ -136,10 +151,9 @@ test('missing config dirs, unshareable required links, corrupt bindings and mirr
   fs.rmSync(dir, { recursive: true });
   assert.deepEqual(launchContext({ host, sid: 'card', agent: 'claude' }), { refuse: 'login "Personal" has no Claude login' });
   assert.deepEqual(prepare({ host, spawnedBy: 'card', agent: 'claude' }), { abort: 'login "Personal" has no Claude login' });
-  give('codex');
-  fs.rmSync(path.join(store.codexHome('personal'), 'auth.json'));
-  fs.rmSync(store.codexHome('personal'), { recursive: true });
-  fs.writeFileSync(store.codexHome('personal'), 'not a directory');
+  const home = give('codex');
+  fs.rmSync(home, { recursive: true });
+  fs.writeFileSync(home, 'not a directory');
   assert.ok(launchContext({ host, sid: 'card', agent: 'codex' }).refuse);
   fs.writeFileSync(path.join(store.root, 'sessions.json'), '{broken');
   assert.ok(launchContext({ host, sid: 'card', agent: 'claude' }).refuse);

@@ -1,5 +1,5 @@
 import os from 'node:os';
-import { refreshMirror } from './codex-mirror.js';
+import { CODEX_CONFIG, refreshMirror } from './codex-mirror.js';
 import { AUTH_OVERRIDES, linkShared, overridesIn, plaintextCredentials } from './claude-config.js';
 import { settingsRefusal } from './claude-settings.js';
 
@@ -23,8 +23,8 @@ function refusal(store, slug, agent, label) {
 export function platformRefusal(label, platform = process.platform) {
   return platform === 'darwin' ? null : `login "${label}" works only on macOS, not ${PLATFORM_LABEL[platform] || platform}`;
 }
-function runtimeRefusal(runtime, label) {
-  return runtime && runtime !== 'local' ? `login "${label}" runs Claude only on the local runtime, not "${runtime}"` : null;
+function runtimeRefusal(runtime, agent, label) {
+  return runtime && runtime !== 'local' ? `login "${label}" runs ${AGENT_LABEL[agent]} only on the local runtime, not "${runtime}"` : null;
 }
 function foldersOf(session) {
   return session ? [session.cwd, session.worktree?.path, session.worktree?.repoRoot].filter(Boolean) : [];
@@ -51,7 +51,7 @@ function claudeContext(store, slug, label, reason, folders) {
   return { env: { CLAUDE_CONFIG_DIR: dir }, refuseIfSet: AUTH_OVERRIDES };
 }
 
-export function prepare({ agent, spawnedBy, ext, runtime, ownLaunch, host }) {
+export function prepare({ agent, spawnedBy, ext, runtime, host }) {
   let label = 'selected';
   try {
     const store = host.stores.logins;
@@ -63,10 +63,8 @@ export function prepare({ agent, spawnedBy, ext, runtime, ownLaunch, host }) {
     if (reason) return { abort: reason };
     const platform = platformRefusal(label);
     if (platform) return { abort: platform };
-    if (agent === 'claude') {
-      const remote = runtimeRefusal(runtime, label);
-      if (remote) return { abort: remote };
-    } else if (ownLaunch) return { abort: `login "${label}" cannot be used with runtime "${runtime}"` };
+    const remote = runtimeRefusal(runtime, agent, label);
+    if (remote) return { abort: remote };
   } catch (err) { return { abort: `login "${label}": ${err.message}` }; }
 }
 
@@ -86,19 +84,18 @@ export function launchContext({ sid, agent, runtime, reason, parentId, ext, host
     if (denied) return { refuse: denied };
     const platform = platformRefusal(label);
     if (platform) return { refuse: platform };
-    if (agent === 'claude') {
-      const remote = runtimeRefusal(runtime, label);
-      if (remote) return { refuse: remote };
-    }
+    const remote = runtimeRefusal(runtime, agent, label);
+    if (remote) return { refuse: remote };
     if (reason === 'fork' && !store.loginFor(sid)) store.bind(sid, slug);
     if (agent === 'claude') return claudeContext(store, slug, label, reason, NOT_LAUNCHES.includes(reason) ? null : () => launchFolders({ store, sid, reason, parentId, host }));
-    const home = store.codexHome(slug);
+    const home = store.codexDir(slug);
+    if (!home) return { refuse: `login "${label}" has no Codex login` };
     const { kept } = refreshMirror(home);
     for (const name of kept) {
       const key = `${home}/${name}`;
       if (!reported.has(key)) { reported.add(key); console.warn(`[logins] login "${label}" keeps per-home entry "${name}"`); }
     }
-    return { env: { CODEX_HOME: home } };
+    return { env: { CODEX_HOME: home }, codexConfig: { ...CODEX_CONFIG } };
   } catch (err) { return { refuse: `login "${label}": ${err.message}` }; }
 }
 

@@ -38,7 +38,11 @@ test('Log in opens a keyed dialog with paths only; Claude runs native login in i
   await send('logins-add', { label: 'Personal' });
   await send('logins-login', { slug: 'personal', provider: 'codex' });
   assert.deepEqual({ ...calls[0], command: undefined }, { cwd: store.dir('personal'), command: undefined, presentation: 'dialog', title: 'Codex login: Personal', key: 'codex:personal' });
-  assert.equal(calls[0].command, `CODEX_HOME='${store.codexHome('personal')}' codex login`);
+  const home = store.codexDir('personal');
+  const codex = `CODEX_HOME='${home}' codex -c 'cli_auth_credentials_store="keyring"'`;
+  assert.equal(calls[0].command, `${codex} login; ${codex} login status`);
+  assert.equal(replies.at(-1).logins[0].codex.present, true);
+  assert.equal(fs.existsSync(path.join(home, 'auth.json')), false);
   await send('logins-login', { slug: 'personal', provider: 'claude' });
   const dir = store.claudeDir('personal');
   assert.equal(calls[1].presentation, 'dialog'); assert.equal(calls[1].key, 'claude:personal'); assert.equal(calls[1].title, 'Claude login: Personal');
@@ -47,6 +51,11 @@ test('Log in opens a keyed dialog with paths only; Claude runs native login in i
   assert.equal(replies.at(-1).logins[0].claude.present, true);
   await send('logins-login', { slug: 'personal', provider: 'claude' });
   assert.equal(store.claudeDir('personal'), dir);
+  await send('logins-login', { slug: 'personal', provider: 'codex' });
+  assert.equal(calls.at(-1).command, calls[0].command);
+  await send('logins-forget', { slug: 'personal', provider: 'codex' });
+  await send('logins-login', { slug: 'personal', provider: 'codex' });
+  assert.notEqual(store.codexDir('personal'), home);
   await send('logins-login', { slug: 'absent', provider: 'claude' });
   assert.match(replies.at(-1).error, /no longer exists/);
   await send('logins-login', { slug: 'personal', provider: 'other' });
