@@ -26,9 +26,9 @@ function fixture(t, enabled = true) {
   store.setUpClaude('personal');
   fs.mkdirSync(store.codexHome('personal')); fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}');
   const registry = loadExtensions({ cfg: { extensions: { logins: enabled } }, builtin: [extension] });
-  const host = { stores: { logins: store } };
-  const options = { ext: registry, hostApiFor: () => host };
   const sm = new SessionManager(); sm.map.clear(); sm._save = () => {}; sm.refreshAlive = async () => {}; sm.killForSession = async () => {};
+  const host = buildHostApi({ id: 'logins', requires: extension.requires, range: extension.engines.wranglerApi, stores: { logins: store }, core: { sessionManager: sm, taskStore: { taskFor: () => null } } });
+  const options = { ext: registry, hostApiFor: () => host };
   sm._ensureClaudeTrust = async () => {}; sm._ensureCodexTrust = async () => {};
   const commands = [];
   sm._newSession = async (_tmux, _cwd, cmd) => { commands.push(cmd); };
@@ -192,4 +192,57 @@ test('host install, update, uninstall and reinstall preserve stored logins and b
   assert.equal(readProvenance().logins, undefined); assertPreserved();
   await install(); assertPreserved();
   await extUninstallHandler.handler({ type: 'ext-uninstall', id: 'logins' }, ctx);
+});
+
+test('Claude settings in the real host launch folder refuse dispatch, resume and fork by name', async (t) => {
+  const { sm, api, store, commands, root } = fixture(t);
+  const settings = path.join(root, '.claude', 'settings.local.json');
+  const named = new RegExp(`login "Personal": Claude settings ${settings.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} set ANTHROPIC_BASE_URL in env`);
+  fs.mkdirSync(path.dirname(settings));
+  fs.writeFileSync(settings, JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://fixture-private' } }));
+  await assert.rejects(api.sessions.spawn({ cwd: root, intent: 'fixture', agent: 'claude', ext: { logins: { login: 'personal' } } }), named);
+  assert.equal(commands.length, 0);
+  fs.rmSync(settings);
+  const card = await api.sessions.spawn({ cwd: root, intent: 'fixture', agent: 'claude', ext: { logins: { login: 'personal' } } });
+  const liveId = `${card.sessionId}-live`;
+  sm.map.get(card.sessionId).liveSessionId = liveId;
+  const bucket = path.join(home, '.claude', 'projects', card.sessionId);
+  fs.mkdirSync(bucket, { recursive: true });
+  fs.writeFileSync(path.join(bucket, `${liveId}.jsonl`), JSON.stringify({ cwd: root }) + '\n');
+  fs.writeFileSync(settings, JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://fixture-private' } }));
+  await assert.rejects(sm.resume(card.sessionId, root), named);
+  await assert.rejects(sm.fork({ sourceId: liveId, parentId: card.sessionId, parentEntry: sm.entryFor(card.sessionId), cwd: root }), named);
+  assert.equal(commands.length, 1);
+  assert.equal(store.loginFor(card.sessionId), 'personal');
+});
+
+test('pane shell: an auth override set by the pane shell refuses the real host launch before claude runs', async (t) => {
+  const { api, commands, root } = fixture(t);
+  await api.sessions.spawn({ cwd: root, intent: 'fixture', agent: 'claude', ext: { logins: { login: 'personal' } } });
+  const bin = path.join(root, 'bin'); const marker = path.join(root, 'claude-ran');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'claude'), `#!/bin/sh\necho ran > '${marker}'\n`, { mode: 0o755 });
+  const { spawnSync } = await import('node:child_process');
+  const base = { PATH: `${bin}:/usr/bin:/bin`, HOME: root };
+  const run = (shell, env) => {
+    fs.rmSync(marker, { force: true });
+    const out = spawnSync(shell, ['-c', commands[0]], { cwd: root, env: { ...base, ...env }, encoding: 'utf8' });
+    return { status: out.status, stderr: out.stderr, ran: fs.existsSync(marker) };
+  };
+  assert.deepEqual(run('/bin/sh', {}), { status: 0, stderr: '', ran: true });
+  for (const [name, value] of [['CLAUDE_SECURESTORAGE_CONFIG_DIR', ''], ['ANTHROPIC_API_KEY', 'fixture-private'], ['CLAUDE_CODE_USE_MANTLE', '1'], ['CLAUDE_CODE_MANAGED_SETTINGS_PATH', root]]) {
+    const refused = run('/bin/sh', { [name]: value });
+    assert.equal(refused.status, 1, name);
+    assert.equal(refused.ran, false, name);
+    assert.match(refused.stderr, new RegExp(`refused this launch: ${name} is set`));
+    assert.ok(!refused.stderr.includes('fixture-private'));
+  }
+  const zdotdir = path.join(root, 'zdot'); fs.mkdirSync(zdotdir);
+  fs.writeFileSync(path.join(zdotdir, '.zshenv'), 'export ANTHROPIC_BASE_URL=http://fixture-private\n');
+  const zsh = run('/bin/zsh', { ZDOTDIR: zdotdir });
+  assert.equal(zsh.status, 1);
+  assert.equal(zsh.ran, false);
+  assert.match(zsh.stderr, /refused this launch: ANTHROPIC_BASE_URL is set in the pane environment/);
+  fs.writeFileSync(path.join(zdotdir, '.zshenv'), '');
+  assert.equal(run('/bin/zsh', { ZDOTDIR: zdotdir }).ran, true);
 });

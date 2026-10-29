@@ -13,7 +13,7 @@ export default {
   help: 'Run a session on a stored second Claude or Codex login, chosen in the dispatch dialog. Off, every session relaunches on the CLIs’ own login; stored logins are kept.',
   description: 'Dispatch a session on another Claude or Codex login while the rest of the board keeps Default.',
   author: 'psjamesh', defaultEnabled: false, dir,
-  requires: ['board:rebuild', 'board:broadcast', 'terminals:create'],
+  requires: ['board:rebuild', 'board:broadcast', 'terminals:create', 'sessions:read'],
   engines: { wranglerApi: '^1.51.0' },
   stores: { logins: () => new LoginStore() },
   handlers: HANDLERS,

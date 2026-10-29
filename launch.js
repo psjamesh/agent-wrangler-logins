@@ -1,10 +1,14 @@
+import os from 'node:os';
 import { refreshMirror } from './codex-mirror.js';
 import { AUTH_OVERRIDES, linkShared, overridesIn, plaintextCredentials } from './claude-config.js';
+import { settingsRefusal } from './claude-settings.js';
 
 export const AGENT_LABEL = { claude: 'Claude', codex: 'Codex' };
 const PLATFORM_LABEL = { linux: 'Linux', win32: 'Windows', freebsd: 'FreeBSD', openbsd: 'OpenBSD', sunos: 'SunOS', aix: 'AIX' };
 const reported = new Set();
 const bindingFailures = new WeakMap();
+const dispatchFolders = new WeakMap();
+const NOT_LAUNCHES = ['assign', 'adopt'];
 
 function dispatchLogin(store, spawnedBy, ext) {
   return spawnedBy ? store.loginFor(spawnedBy) : ext?.login || null;
@@ -22,7 +26,15 @@ export function platformRefusal(label, platform = process.platform) {
 function runtimeRefusal(runtime, label) {
   return runtime && runtime !== 'local' ? `login "${label}" runs Claude only on the local runtime, not "${runtime}"` : null;
 }
-function claudeContext(store, slug, label, reason) {
+function foldersOf(session) {
+  return session ? [session.cwd, session.worktree?.path, session.worktree?.repoRoot].filter(Boolean) : [];
+}
+function launchFolders({ store, sid, reason, parentId, host }) {
+  if (reason === 'headless') return [os.tmpdir()];
+  const card = reason === 'fork' ? parentId : sid;
+  return [...(dispatchFolders.get(store)?.get(card) || []), ...foldersOf(host.sessions?.get(card))];
+}
+function claudeContext(store, slug, label, reason, folders) {
   const dir = store.claudeDir(slug);
   if (!dir) return { refuse: `login "${label}" has no Claude login` };
   const { unready } = linkShared(dir);
@@ -30,6 +42,10 @@ function claudeContext(store, slug, label, reason) {
   if (reason === 'headless') {
     const set = overridesIn(process.env);
     if (set.length) return { refuse: `login "${label}": the Agent Wrangler server environment sets ${set.join(', ')}` };
+  }
+  if (folders) {
+    const problem = settingsRefusal({ dirs: folders(), loginDir: dir });
+    if (problem) return { refuse: `login "${label}": ${problem}` };
   }
   if (plaintextCredentials(dir)) console.warn(`[logins] login "${label}" keeps its Claude credential in a plaintext .credentials.json`);
   return { env: { CLAUDE_CONFIG_DIR: dir }, refuseIfSet: AUTH_OVERRIDES };
@@ -75,7 +91,7 @@ export function launchContext({ sid, agent, runtime, reason, parentId, ext, host
       if (remote) return { refuse: remote };
     }
     if (reason === 'fork' && !store.loginFor(sid)) store.bind(sid, slug);
-    if (agent === 'claude') return claudeContext(store, slug, label, reason);
+    if (agent === 'claude') return claudeContext(store, slug, label, reason, NOT_LAUNCHES.includes(reason) ? null : () => launchFolders({ store, sid, reason, parentId, host }));
     const home = store.codexHome(slug);
     const { kept } = refreshMirror(home);
     for (const name of kept) {
@@ -86,12 +102,16 @@ export function launchContext({ sid, agent, runtime, reason, parentId, ext, host
   } catch (err) { return { refuse: `login "${label}": ${err.message}` }; }
 }
 
-export function onBeforeDispatch({ sessionId, spawnedBy, ext, host }) {
+export function onBeforeDispatch({ sessionId, spawnedBy, ext, cwd, worktree, host }) {
   const store = host.stores.logins;
   let slug = 'selected';
   try {
     slug = dispatchLogin(store, spawnedBy, ext);
-    if (slug) store.bind(sessionId, slug);
+    if (slug) {
+      if (!dispatchFolders.has(store)) dispatchFolders.set(store, new Map());
+      dispatchFolders.get(store).set(sessionId, foldersOf({ cwd, worktree }));
+      store.bind(sessionId, slug);
+    }
     bindingFailures.get(store)?.delete(sessionId);
   } catch (err) {
     if (!bindingFailures.has(store)) bindingFailures.set(store, new Map());
@@ -106,4 +126,5 @@ export function onFork({ sessionId, parentId, host }) {
 export function onPurge({ sessionId, host }) {
   host.stores.logins.unbind(sessionId);
   bindingFailures.get(host.stores.logins)?.delete(sessionId);
+  dispatchFolders.get(host.stores.logins)?.delete(sessionId);
 }
