@@ -81,7 +81,7 @@ test('plaintext credentials are detected without being opened', (t) => {
 test('override detection counts a variable set to an empty string', () => {
   assert.deepEqual(overridesIn({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '', PATH: '/bin' }), ['CLAUDE_SECURESTORAGE_CONFIG_DIR']);
   assert.deepEqual(overridesIn({ ANTHROPIC_BASE_URL: 'x', ANTHROPIC_API_KEY: 'x' }), ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL']);
-  for (const name of ['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'ANTHROPIC_BASE_URL']) assert.ok(AUTH_OVERRIDES.includes(name), name);
+  for (const name of ['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_CUSTOM_OAUTH_URL', 'CLAUDE_CODE_MANAGED_SETTINGS_PATH']) assert.ok(AUTH_OVERRIDES.includes(name), name);
 });
 
 test('the dialog login command refuses overrides by name before Claude starts', (t) => {

@@ -12,12 +12,13 @@ function fixture(t) {
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const store = new LoginStore(root); store.add('Personal'); store.add('Other');
   fs.writeFileSync(path.join(process.env.CODEX_HOME, 'config.toml'), 'fixture');
-  const host = { stores: { logins: store } };
+  const work = path.join(root, 'work'); fs.mkdirSync(work);
+  const host = { stores: { logins: store }, sessions: { get: (sessionId) => ({ sessionId, cwd: work, worktree: null }) } };
   const give = (agent) => {
     if (agent === 'claude') return store.setUpClaude('personal');
     else { fs.mkdirSync(store.codexHome('personal'), { recursive: true }); fs.writeFileSync(path.join(store.codexHome('personal'), 'auth.json'), '{}'); }
   };
-  return { store, host, give };
+  return { store, host, give, work, root };
 }
 
 for (const agent of ['claude', 'codex']) {
@@ -160,4 +161,41 @@ test('a transient lineage read failure cannot turn a spawned login into Default'
   store.loginFor = (sid) => { if (first) { first = false; throw new Error('binding read failed'); } return original(sid); };
   try { onBeforeDispatch({ host, sessionId: 'child', spawnedBy: 'parent' }); } catch {}
   assert.match(launchContext({ host, sid: 'child', reason: 'dispatch', agent: 'claude' }).refuse, /binding read failed/);
+});
+
+test('Claude settings for the launch folder refuse dispatch, resume and fork by name', (t) => {
+  const { store, host, give, work, root } = fixture(t); const dir = give('claude');
+  const repoRoot = path.join(root, 'repo'); const tree = path.join(root, 'tree');
+  fs.mkdirSync(repoRoot); fs.mkdirSync(tree);
+  onBeforeDispatch({ host, sessionId: 'card', ext: { login: 'personal' }, cwd: tree, worktree: { path: tree, repoRoot } });
+  const settings = path.join(repoRoot, '.claude', 'settings.local.json');
+  fs.mkdirSync(path.dirname(settings)); fs.writeFileSync(settings, JSON.stringify({ env: { ANTHROPIC_BASE_URL: 'http://fixture-private' } }));
+  const named = `login "Personal": Claude settings ${settings} set ANTHROPIC_BASE_URL in env, which overrides the login's sign-in`;
+  assert.deepEqual(launchContext({ host, agent: 'claude', reason: 'dispatch', sid: 'card' }), { refuse: named });
+  fs.rmSync(settings);
+  assert.equal(launchContext({ host, agent: 'claude', reason: 'dispatch', sid: 'card' }).env.CLAUDE_CONFIG_DIR, dir);
+  const project = path.join(work, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(project)); fs.writeFileSync(project, JSON.stringify({ apiKeyHelper: '/bin/fixture-private' }));
+  store.bind('parent', 'personal');
+  const refused = { refuse: `login "Personal": Claude settings ${project} set apiKeyHelper, which overrides the login's sign-in` };
+  for (const reason of ['resume', 'message', 'snooze-wake']) assert.deepEqual(launchContext({ host, agent: 'claude', reason, sid: 'parent' }), refused);
+  assert.deepEqual(launchContext({ host, agent: 'claude', reason: 'fork', sid: 'child', parentId: 'parent' }), refused);
+  for (const reason of ['assign', 'adopt', 'headless']) assert.equal(launchContext({ host, agent: 'claude', reason, sid: 'parent' }).env.CLAUDE_CONFIG_DIR, dir);
+  fs.writeFileSync(path.join(dir, 'settings.json'), JSON.stringify({ env: { CLAUDE_CODE_USE_BEDROCK: '1' } }));
+  assert.deepEqual(launchContext({ host, agent: 'claude', reason: 'headless', sid: 'parent' }), { refuse: `login "Personal": Claude settings ${path.join(dir, 'settings.json')} set CLAUDE_CODE_USE_BEDROCK in env, which overrides the login's sign-in` });
+  assert.deepEqual(launchContext({ host, agent: 'codex', reason: 'resume', sid: 'unmapped' }), {});
+  onPurge({ sessionId: 'card', host });
+});
+
+test('an unknown or unreadable launch folder refuses instead of verifying', (t) => {
+  const { store, host, give, work } = fixture(t); give('claude'); store.bind('card', 'personal');
+  const blind = { stores: host.stores };
+  for (const reason of ['resume', 'fork']) {
+    assert.deepEqual(launchContext({ host: blind, agent: 'claude', reason, sid: reason === 'fork' ? 'child' : 'card', parentId: 'card' }), { refuse: 'login "Personal": the launch folder is not known, so its Claude settings cannot be checked' });
+  }
+  const gone = { stores: host.stores, sessions: { get: () => null } };
+  assert.match(launchContext({ host: gone, agent: 'claude', reason: 'resume', sid: 'card' }).refuse, /launch folder is not known/);
+  const settings = path.join(work, '.claude', 'settings.json');
+  fs.mkdirSync(path.dirname(settings)); fs.writeFileSync(settings, '{broken');
+  assert.deepEqual(launchContext({ host, agent: 'claude', reason: 'resume', sid: 'card' }), { refuse: `login "Personal": cannot read Claude settings ${settings}, so the login's sign-in cannot be verified` });
 });
