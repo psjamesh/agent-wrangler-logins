@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { expandHome, shellQuote, writeJsonAtomic } from './persistence.js';
+import { loginCommand as launcherCommand } from './login-command.js';
+import { expandHome, writeJsonAtomic } from './persistence.js';
 
 export const SHARED = ['projects', 'sessions', 'skills', 'agents', 'commands', 'CLAUDE.md'];
 export const REQUIRED = ['projects', 'sessions'];
@@ -63,7 +64,4 @@ export function overridesIn(env) {
   return AUTH_OVERRIDES.filter((name) => env[name] !== undefined);
 }
 
-export function loginCommand(dir) {
-  const check = `set -- $(env | cut -d= -f1 | grep -xE "${AUTH_OVERRIDES.join('|')}"); [ $# -eq 0 ] || { echo "Logins refused: unset $* first" >&2; exit 1; }`;
-  return `/bin/sh -c ${shellQuote(check)} && CLAUDE_CONFIG_DIR=${shellQuote(dir)} claude`;
-}
+export function loginCommand(dir) { return launcherCommand('claude', dir); }

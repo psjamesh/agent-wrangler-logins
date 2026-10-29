@@ -3,8 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
-import { SHARED, NEVER_SHARED, AUTH_OVERRIDES, linkShared, seedSettings, plaintextCredentials, overridesIn, loginCommand } from './claude-config.js';
+import { SHARED, NEVER_SHARED, AUTH_OVERRIDES, linkShared, seedSettings, plaintextCredentials, overridesIn } from './claude-config.js';
 
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'aw-claude-config-')));
@@ -82,22 +81,4 @@ test('override detection counts a variable set to an empty string', () => {
   assert.deepEqual(overridesIn({ CLAUDE_SECURESTORAGE_CONFIG_DIR: '', PATH: '/bin' }), ['CLAUDE_SECURESTORAGE_CONFIG_DIR']);
   assert.deepEqual(overridesIn({ ANTHROPIC_BASE_URL: 'x', ANTHROPIC_API_KEY: 'x' }), ['ANTHROPIC_API_KEY', 'ANTHROPIC_BASE_URL']);
   for (const name of ['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_USE_BEDROCK', 'CLAUDE_CODE_USE_VERTEX', 'ANTHROPIC_BASE_URL', 'CLAUDE_CODE_USE_MANTLE', 'CLAUDE_CODE_CUSTOM_OAUTH_URL', 'CLAUDE_CODE_MANAGED_SETTINGS_PATH']) assert.ok(AUTH_OVERRIDES.includes(name), name);
-});
-
-test('the dialog login command refuses overrides by name before Claude starts', (t) => {
-  const { dir } = fixture(t);
-  const bin = path.join(path.dirname(dir), 'bin'); fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\necho "fake claude CLAUDE_CONFIG_DIR=$CLAUDE_CONFIG_DIR"\n', { mode: 0o755 });
-  const command = loginCommand(dir);
-  assert.ok(command.endsWith(`CLAUDE_CONFIG_DIR='${dir}' claude`));
-  const run = (env) => spawnSync('/bin/sh', ['-c', command], { env: { PATH: `${bin}:/usr/bin:/bin`, ...env }, encoding: 'utf8' });
-  const clean = run({});
-  assert.equal(clean.status, 0);
-  assert.equal(clean.stdout.trim(), `fake claude CLAUDE_CONFIG_DIR=${dir}`);
-  for (const name of ['CLAUDE_SECURESTORAGE_CONFIG_DIR', 'ANTHROPIC_API_KEY']) {
-    const refused = run({ [name]: '' });
-    assert.equal(refused.status, 1);
-    assert.equal(refused.stdout, '');
-    assert.match(refused.stderr, new RegExp(`Logins refused: unset ${name} first`));
-  }
 });

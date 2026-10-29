@@ -1,15 +1,12 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { expandHome, shellQuote } from './persistence.js';
+import { loginCommand as launcherCommand } from './login-command.js';
+import { expandHome } from './persistence.js';
 
 export const EXCLUDED = ['auth.json', 'app-server-control', 'app-server-daemon', 'ipc', 'process_manager', 'tmp'];
 export const CODEX_CONFIG = { cli_auth_credentials_store: 'keyring' };
-export function codexCommand(home, args) {
-  const config = Object.entries(CODEX_CONFIG).map(([key, value]) => `-c ${shellQuote(`${key}=${JSON.stringify(value)}`)}`).join(' ');
-  return `CODEX_HOME=${shellQuote(home)} codex ${config} ${args}`;
-}
-export function loginCommand(home) { return `${codexCommand(home, 'login')}; ${codexCommand(home, 'login status')}`; }
+export function loginCommand(home) { return launcherCommand('codex', home); }
 export function excluded(name) { return EXCLUDED.includes(name) || name.endsWith('-locks'); }
 
 export function refreshMirror(mirrorDir, codexHome = process.env.CODEX_HOME || path.join(os.homedir(), '.codex')) {
